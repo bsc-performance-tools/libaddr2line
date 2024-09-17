@@ -1,12 +1,12 @@
-#include <pthread.h>
-#include <sys/types.h>
-#include <stdio.h>
-#include <unistd.h>
-#include <string.h>
-#include <stdlib.h>
 #include <ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include "config.h"
 
-#define UNRESOLVED_ADDRESS "??"
+#define UNKNOWN_FUNCTION "??"
 
 enum {
 	READ_END = 0,
@@ -21,19 +21,37 @@ int parent_write[2];		// Parent writes to child
 int child_write[2];			// Child writes to parent
 
 // Flag to indicate whether to use elfutils or binutils
-int use_elfutils = 0;
+
+enum {
+	USE_ELFUTILS = 0,
+	USE_BINUTILS,
+	NUM_BACKENDS
+};
+
+char *backend_commands[NUM_BACKENDS] = {
+	[USE_ELFUTILS] = ELFUTILS_ADDR2LINE,
+	[USE_BINUTILS] = BINUTILS_ADDR2LINE
+};
+
+int backend = USE_ELFUTILS;
 
 /**
- * check_toolset
+ * select_backend
  * 
- * Check the environment variable USE_ELFUTILS to determine whether to use elfutils or binutils (default).
+ * Check the environment variable LIBADDR2LINE_BACKEND to determine whether to use elfutils (default) or binutils .
  */
-void select_backend() {
-    char *env = getenv("USE_ELFUTILS");
-    if ((env != NULL) && (strcmp(env, "1") == 0)) 
-	{
-        use_elfutils = 1;
-    }
+static int select_backend() {
+    char *env_libaddr2line_backend = getenv("LIBADDR2LINE_BACKEND");
+
+	if (env_libaddr2line_backend != NULL) {
+		if (!strcmp(env_libaddr2line_backend, "elfutils")) {
+			return USE_ELFUTILS;
+		} else if (!strcmp(env_libaddr2line_backend, "binutils")) {
+			return USE_BINUTILS;
+		} else {
+			return USE_ELFUTILS;
+		}
+	}
 }
 
 static int is_binary_file(const char *filename) {
@@ -67,20 +85,23 @@ static int is_binary_file(const char *filename) {
  */
 void addr2line_init(char *filename)
 {
-	select_backend();
+	// Hack to prevent recursive initialization when addr2line_init is called from a library constructor, and the forked child process triggers the constructor again
+	char *addr2line_started = getenv("LIBADDR2LINE_STARTED");
+	if (addr2line_started) return;
+	putenv("LIBADDR2LINE_STARTED=1");
+
+	// Check the backend to use
+	backend = select_backend();
 
 	// Check if the filename is a binary file or a maps file
 	int is_binary = is_binary_file(filename);
-	if (!use_elfutils && !is_binary)
+
+	// Check for invalid backend/object combinations
+	if ((backend == USE_BINUTILS) && (!is_binary))
 	{
 		fprintf(stderr, "ERROR: addr2line_init: binutils backend can only be used with binary files\n");
 		exit(EXIT_FAILURE);	
 	}
-
-	// Hack to prevent recursive initialization when addr2line_init is called from a library constructor, and the forked child process triggers the constructor again
-	char *addr2line_started = getenv("ADDR2LINE_STARTED");
-	if (addr2line_started) return;
-	putenv("ADDR2LINE_STARTED=1");
 
 	// Creating pipes for communication between parent and child processes
 	if (pipe(parent_write) == -1 || pipe(child_write) == -1)
@@ -108,10 +129,9 @@ void addr2line_init(char *filename)
 		close(child_write[WRITE_END]);
 
 		// Set up arguments for execution
-		char *backend = use_elfutils ? "eu-addr2line" : "addr2line";
-		char *argv_elfutils[] = { backend, (is_binary ? "-e" : "-M"), filename, "-C", "-f", "-i", NULL };
-		char *argv_binutils[] = { backend, "-e", filename, "-C", "-f", NULL };
-		char **argv = (use_elfutils ? argv_elfutils : argv_binutils); 
+		char *argv_elfutils[] = { ELFUTILS_ADDR2LINE, (is_binary ? "-e" : "-M"), filename, "-C", "-f", "-i", NULL };
+		char *argv_binutils[] = { BINUTILS_ADDR2LINE, "-e", filename, "-C", "-f", NULL };
+		char **argv = (backend == USE_BINUTILS ? argv_binutils : argv_elfutils); 
 
 		// Replaces the current process with addr2line
 		execvp(backend, argv);
@@ -157,14 +177,14 @@ void addr2line_translate(char *address, char **function, char **file, int *line,
 		buf[strlen(buf)-1] = '\0'; // Remove the newline character
 		*function = strdup(buf);
 	} else {
-		*function = strdup(UNRESOLVED_ADDRESS);
+		*function = strdup(UNKNOWN_FUNCTION);
 	}
 
 	// Read the filename, line number, and column number from addr2line's output
 	fgets(buf, sizeof(buf), addr2line_fd);
 
 	*line = *column = 0;
-	if (use_elfutils) 
+	if (backend == USE_ELFUTILS)
 	{	
 		// Parsing the column number
 		char *last_colon = strrchr(buf, ':'); 

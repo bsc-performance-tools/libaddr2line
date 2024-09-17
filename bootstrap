@@ -1,0 +1,7 @@
+#!/bin/sh
+# bootstrap script to initialize the autotools build system
+
+# Run autoreconf to generate configure script and other necessary files
+autoreconf --install --force --verbose
+
+echo "Bootstrap complete. Now you can run ./configure and make."

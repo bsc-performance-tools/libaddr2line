@@ -1,5 +1,5 @@
 CC = gcc
-MPICC = /home/snagarka/Apps/mpich/4.2.2/bin/mpicc
+MPICC = /home/gllort/Apps/openmpi/latest/bin/mpicc
 
 LIBCFLAGS = -O0 -g -fPIC -shared -rdynamic
 APPCFLAGS = -O0 -g -rdynamic
@@ -9,7 +9,7 @@ APPCFLAGS = -O0 -g -rdynamic
 all: libmpitrace.so libmpi.so app
 
 libmpitrace.so: libmpitrace.c
-	$(MPICC) $(LIBCFLAGS) -I/usr/lib/x86_64-linux-gnu/openmpi/include -I. $^ -o $@ -L.. -laddr2line -ldl
+	$(MPICC) $(LIBCFLAGS) -I/usr/lib/x86_64-linux-gnu/openmpi/include -I. $^ -o $@ -L.. -laddr2line -Wl,-rpath,.. -ldl
 
 libmpi.so: libmpi.c
 	$(CC) $(LIBCFLAGS) $^ -o $@

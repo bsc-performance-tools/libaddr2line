@@ -11,7 +11,7 @@
 
 //External functions to initialize addr2line and translate addresses
 extern void addr2line_init(char *);
-extern void addr2line_translate(char *, char *, char *, int *, int *);
+extern void addr2line_translate(char *, char **, char **, int *, int *);
 
 /**
  * Copies the contentsof one file to another.
@@ -183,9 +183,11 @@ int MPI_Barrier(MPI_Comm comm)
 	void *bar_real = dlsym(RTLD_DEFAULT, "bar");
 
 	fprintf(stderr, "[TASK %d] address to translate %lx\n", rank, bar_real);
-	addr2line_translate(bar_real, function, file, &line, &col);
+	addr2line_translate(bar_real, &function, &file, &line, &col);
+	fprintf(stderr, "[TASK %d] translation result: function=%s file=%s line=%d column=%d\n", rank, function, file, line, col);
 	fprintf(stderr, "[TASK %d] address to translate %lx\n", rank, &MPI_Barrier);
-	addr2line_translate(&MPI_Barrier, function, file, &line, &col);
+	addr2line_translate(&MPI_Barrier, &function, &file, &line, &col);
+	fprintf(stderr, "[TASK %d] translation result: function=%s file=%s line=%d column=%d\n", rank, function, file, line, col);
 #endif
 
 	// Call to the original MPI_Barrier function

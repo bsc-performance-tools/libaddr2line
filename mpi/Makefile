@@ -9,7 +9,7 @@ APPCFLAGS = -O0 -g -rdynamic
 all: libmpitrace.so libmpi.so app
 
 libmpitrace.so: libmpitrace.c
-	$(MPICC) $(LIBCFLAGS) -I/usr/lib/x86_64-linux-gnu/openmpi/include -I. $^ -o $@ -L.. -laddr2line -Wl,-rpath,.. -ldl
+	$(MPICC) $(LIBCFLAGS) -I/usr/lib/x86_64-linux-gnu/openmpi/include -I. $^ -o $@ -L../install/lib -laddr2line -Wl,-rpath,.. -ldl
 
 libmpi.so: libmpi.c
 	$(CC) $(LIBCFLAGS) $^ -o $@

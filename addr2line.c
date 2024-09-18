@@ -1,4 +1,5 @@
 #include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,7 +7,7 @@
 #include <unistd.h>
 #include "config.h"
 
-#define UNKNOWN_FUNCTION "??"
+#define UNKNOWN_ADDRESS "??"
 
 enum {
 	READ_END = 0,
@@ -17,40 +18,51 @@ enum {
 FILE *addr2line_fd = NULL;	
 
 // Pipes for communication between parent and child processes
-int parent_write[2];		// Parent writes to child
-int child_write[2];			// Child writes to parent
+int parent_write[2]; // Parent writes to child
+int child_write[2];  // Child writes to parent
 
 // Flag to indicate whether to use elfutils or binutils
 
 enum {
-	USE_ELFUTILS = 0,
+#if defined(HAVE_ELFUTILS)
+	USE_ELFUTILS,
+#endif
+#if defined(HAVE_BINUTILS)
 	USE_BINUTILS,
-	NUM_BACKENDS
+#endif
+	NUM_AVAILABLE_BACKENDS
 };
 
-char *backend_commands[NUM_BACKENDS] = {
-	[USE_ELFUTILS] = ELFUTILS_ADDR2LINE,
-	[USE_BINUTILS] = BINUTILS_ADDR2LINE
-};
+#if defined(HAVE_ELFUTILS)
+# define DEFAULT_BACKEND USE_ELFUTILS
+#elif defined(HAVE_BINUTILS)
+# define DEFAULT_BACKEND USE_BINUTILS
+#else
+# error "No addr2line backend available"
+#endif
 
-int backend = USE_ELFUTILS;
+int selected_backend = DEFAULT_BACKEND;
 
 /**
  * select_backend
  * 
  * Check the environment variable LIBADDR2LINE_BACKEND to determine whether to use elfutils (default) or binutils .
  */
-static int select_backend() {
+static void select_backend() 
+{
     char *env_libaddr2line_backend = getenv("LIBADDR2LINE_BACKEND");
 
 	if (env_libaddr2line_backend != NULL) {
+#if defined(HAVE_ELFUTILS)
 		if (!strcmp(env_libaddr2line_backend, "elfutils")) {
-			return USE_ELFUTILS;
-		} else if (!strcmp(env_libaddr2line_backend, "binutils")) {
-			return USE_BINUTILS;
-		} else {
-			return USE_ELFUTILS;
+			selected_backend = USE_ELFUTILS;
 		}
+#endif
+#if defined(HAVE_BINUTILS)
+		if (!strcmp(env_libaddr2line_backend, "binutils")) {
+			selected_backend = USE_BINUTILS;
+		}
+#endif
 	}
 }
 
@@ -74,6 +86,29 @@ static int is_binary_file(const char *filename) {
     return 0; // Text file
 }
 
+static ssize_t write_with_retry(int fd, const void *buf, size_t count) {
+    ssize_t written = 0, result = 0;
+
+    while (count > 0) {
+        result = write(fd, buf, count);
+        
+        if (result < 0) {
+            if (errno != EINTR) {
+				// Retry the full write if EINTR, other errors are fatal				
+                perror("write failed");
+                exit(EXIT_FAILURE);
+            }
+        }
+		else {
+        	// Successfully wrote some data, continue writing the rest if the write was partial
+        	written += result;
+        	buf = (const char *)buf + result;
+        	count -= result;
+		}
+    }
+    return written;
+}
+
 /** 
  * addr2line_init
  * 
@@ -91,17 +126,19 @@ void addr2line_init(char *filename)
 	putenv("LIBADDR2LINE_STARTED=1");
 
 	// Check the backend to use
-	backend = select_backend();
+	select_backend();
 
 	// Check if the filename is a binary file or a maps file
 	int is_binary = is_binary_file(filename);
 
+#if defined(HAVE_BINUTILS)
 	// Check for invalid backend/object combinations
-	if ((backend == USE_BINUTILS) && (!is_binary))
+	if ((selected_backend == USE_BINUTILS) && (!is_binary))
 	{
 		fprintf(stderr, "ERROR: addr2line_init: binutils backend can only be used with binary files\n");
 		exit(EXIT_FAILURE);	
 	}
+#endif
 
 	// Creating pipes for communication between parent and child processes
 	if (pipe(parent_write) == -1 || pipe(child_write) == -1)
@@ -129,12 +166,22 @@ void addr2line_init(char *filename)
 		close(child_write[WRITE_END]);
 
 		// Set up arguments for execution
-		char *argv_elfutils[] = { ELFUTILS_ADDR2LINE, (is_binary ? "-e" : "-M"), filename, "-C", "-f", "-i", NULL };
-		char *argv_binutils[] = { BINUTILS_ADDR2LINE, "-e", filename, "-C", "-f", NULL };
-		char **argv = (backend == USE_BINUTILS ? argv_binutils : argv_elfutils); 
+		char *argv_elfutils[] = { ELFUTILS_ADDR2LINE, "-C", "-f", "-i", (is_binary ? "-e" : "-M"), filename, NULL };
+		char *argv_binutils[] = { BINUTILS_ADDR2LINE, "-C", "-f", "-e", filename, NULL };
+		char **argv = NULL;
+#if defined(HAVE_ELFUTILS)
+		if (selected_backend == USE_ELFUTILS) {
+			argv = argv_elfutils;			
+		}
+#endif
+#if defined(HAVE_BINUTILS)
+		if (selected_backend == USE_BINUTILS) {
+			argv = argv_binutils;
+		}
+#endif
 
-		// Replaces the current process with addr2line
-		execvp(backend, argv);
+		// Replaces the current process with addr2line backend
+		execvp(argv[0], argv);
 	}
 	else 
 	{
@@ -142,7 +189,7 @@ void addr2line_init(char *filename)
 		close(parent_write[READ_END]); // Close unused 'read end' of the parent_write pipe
 		close(child_write[WRITE_END]); // Close unused 'write end' of the child_write pipe
 
-		// Open a FILE stream to read addr2line's output
+		// Open a FILE stream to read addr2line's backend output
 		addr2line_fd = fdopen(child_write[READ_END], "r");
 		if (addr2line_fd == NULL) {
 			perror("fdopen failed");
@@ -157,7 +204,7 @@ void addr2line_init(char *filename)
  * Translate a memory address into the corresponding function, file, line, and column
  * using addr2line
  * 
- * @param str 		The memory address to translate.
+ * @param address	The memory address to translate.
  * @param function 	Output buffer for the function name.
  * @param file 		Output buffer for the filename.
  * @param line		Output pointer for the line number.
@@ -169,41 +216,48 @@ void addr2line_translate(char *address, char **function, char **file, int *line,
 
 	// Format the address pointer as a string and pass it to addr2line
 	sprintf(buf, "%p\n", address); 
-	write(parent_write[WRITE_END], buf, strlen(buf));
+	write_with_retry(parent_write[WRITE_END], buf, strlen(buf));
 
 	// Read the function name from addr2line's output
-	fgets(buf, sizeof(buf), addr2line_fd);
-	if (buf[strlen(buf)-1] == '\n') {
-		buf[strlen(buf)-1] = '\0'; // Remove the newline character
+	*function = NULL;
+	if (fgets(buf, sizeof(buf), addr2line_fd) != NULL)
+	{
+		if (buf[strlen(buf)-1] == '\n') {
+			buf[strlen(buf)-1] = '\0'; // Remove the newline character
+		} 
+		// Copying the function name
 		*function = strdup(buf);
-	} else {
-		*function = strdup(UNKNOWN_FUNCTION);
 	}
 
 	// Read the filename, line number, and column number from addr2line's output
-	fgets(buf, sizeof(buf), addr2line_fd);
-
+	*file = NULL;
 	*line = *column = 0;
-	if (backend == USE_ELFUTILS)
-	{	
-		// Parsing the column number
-		char *last_colon = strrchr(buf, ':'); 
-		if (last_colon != NULL)
-		{
-			*column = atoi(last_colon + 1);
-			*last_colon = '\0'; 
-		}
-	}
-
-	// Parsing the line number
-	char *first_colon = strrchr(buf, ':');
-	if (first_colon != NULL)
+	if (fgets(buf, sizeof(buf), addr2line_fd) != NULL)
 	{
-		*line = atoi(first_colon + 1);
-		*first_colon = '\0'; 
+#if defined(HAVE_ELFUTILS)
+		// Parsing the column number (currently only available with elfutils)
+		if (selected_backend == USE_ELFUTILS)
+		{	
+			char *last_colon = strrchr(buf, ':'); 
+			if (last_colon != NULL)
+			{
+				*column = atoi(last_colon + 1);
+				*last_colon = '\0'; 
+			}
+		}
+#endif
+		// Parsing the line number
+		char *first_colon = strrchr(buf, ':');
+		if (first_colon != NULL)
+		{
+			*line = atoi(first_colon + 1);
+			*first_colon = '\0'; 
+		}
+		// Copying the filename
+		*file = strdup(buf);
 	}
-	// Copying the filename
-	*file = strdup(buf);
 
-	fprintf(stderr, "function: %s file: %s line: %d column: %d\n", *function, *file, *line, *column);
+	// Alternatively, we could return the address string (strdup(address)) if addr2line fails to resolve 
+	if (*function == NULL) *function = strdup(UNKNOWN_ADDRESS);
+	if (*file == NULL) *file = strdup(UNKNOWN_ADDRESS);
 }

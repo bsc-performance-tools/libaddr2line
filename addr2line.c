@@ -114,6 +114,7 @@ void addr2line_init(char *filename, int options)
 	if (addr2line_started) return;
 	putenv("LIBADDR2LINE_STARTED=1");
 
+#warning "Make sure the tests now use the new options flag"
 	// Set the configuration options
 	setOptions = options;
 

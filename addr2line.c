@@ -137,6 +137,9 @@ static ssize_t write_with_retry(int fd, const void *buf, size_t count) {
  */
 void addr2line_init(char *filename, int options)
 {
+	// Hack to prevent our tracing libraries to trigger for the exec'd addr2line command
+	if (options & OPTION_CLEAR_PRELOAD) unsetenv("LD_PRELOAD");
+
 	// Hack to prevent recursive initialization when addr2line_init is called from a library constructor, and the forked child process triggers the constructor again
 	char *addr2line_started = getenv("LIBADDR2LINE_STARTED");
 	if (addr2line_started) return;
@@ -237,6 +240,7 @@ void addr2line_translate(void *address, char **function, char **file, int *line,
 
 	// Format the address pointer as a string and pass it to addr2line
 	sprintf(address_str, "%p\n", address); 
+	fprintf(stderr, "[DEBUG] addr2line_translate: address_str=%s\n", address_str);
 	write_with_retry(parentWrite[WRITE_END], address_str, strlen(address_str));
 
 	// Read the function name from addr2line's output

@@ -30,45 +30,28 @@ enum {
 # error "No addr2line backend available"
 #endif
 
-enum {
-	READ_END = 0,
-	WRITE_END = 1
-};
-
-// File descriptor for reading addr2line output
-FILE *addr2lineOutputStream = NULL;	
-
-// Pipes for communication between parent and child processes
-int parentWrite[2]; // Parent writes to child
-int childWrite[2];  // Child writes to parent
-
-// User can override the default backend through the environment variable LIBADDR2LINE_BACKEND
-int useBackend = DEFAULT_BACKEND;
-
-// Selected configuration options
-int setOptions = 0;
-
 /**
  * select_backend
  * 
  * Check the environment variable LIBADDR2LINE_BACKEND to determine whether to use elfutils (default) or binutils .
  */
-static void select_backend() 
+static int select_backend() 
 {
     char *env_libaddr2line_backend = getenv("LIBADDR2LINE_BACKEND");
 
 	if (env_libaddr2line_backend != NULL) {
 #if defined(HAVE_ELFUTILS)
 		if (!strcmp(env_libaddr2line_backend, "elfutils")) {
-			useBackend = USE_ELFUTILS;
+			return USE_ELFUTILS;
 		}
 #endif
 #if defined(HAVE_BINUTILS)
 		if (!strcmp(env_libaddr2line_backend, "binutils")) {
-			useBackend = USE_BINUTILS;
+			return USE_BINUTILS;
 		}
 #endif
 	}
+	return DEFAULT_BACKEND;
 }
 
 /**
@@ -133,31 +116,41 @@ static ssize_t write_with_retry(int fd, const void *buf, size_t count) {
  * This function sets up pipes for inter-process communication, forks a child
  * process to execute addr2line, and connects the pipes to the child's stdin and stdout.
  * 
- * @param filename Path either to the binary or to a dump of the /proc/self/maps.
+ * @param object Path either to the binary or to a dump of the /proc/self/maps.
  */
-void addr2line_init(char *filename, int options)
+addr2line_process_t * addr2line_exec(char *object, int options)
 {
+	addr2line_process_t *backend = NULL;
+
 	// Hack to prevent our tracing libraries to trigger for the exec'd addr2line command
 	if (options & OPTION_CLEAR_PRELOAD) unsetenv("LD_PRELOAD");
 
 	// Hack to prevent recursive initialization when addr2line_init is called from a library constructor, and the forked child process triggers the constructor again
 	char *addr2line_started = getenv("LIBADDR2LINE_STARTED");
-	if (addr2line_started) return;
+	if (addr2line_started) return NULL;
 	putenv("LIBADDR2LINE_STARTED=1");
+
+
+	if ((backend = (addr2line_process_t *)malloc(sizeof(addr2line_process_t))) == NULL)
+	{
+		fprintf(stderr, "ERROR: addr2line_init: Out of memory\n");
+		exit(EXIT_FAILURE);
+	}
+	
 
 #warning "Make sure the tests now use the new options flag"
 	// Set the configuration options
-	setOptions = options;
+	backend->setOptions = options;
 
 	// Check the backend to use
-	select_backend();
+	backend->useBackend = select_backend();
 
-	// Check if the filename is a binary file or a maps file
-	int is_binary = is_binary_file(filename);
+	// Check if the object is a binary file or a maps file
+	int is_binary = is_binary_file(object);
 
 #if defined(HAVE_BINUTILS)
 	// Check for invalid backend/object combinations
-	if ((useBackend == USE_BINUTILS) && (!is_binary))
+	if ((backend->useBackend == USE_BINUTILS) && (!is_binary))
 	{
 		fprintf(stderr, "ERROR: addr2line_init: binutils backend can only be used with binary files\n");
 		exit(EXIT_FAILURE);	
@@ -165,7 +158,7 @@ void addr2line_init(char *filename, int options)
 #endif
 
 	// Creating pipes for communication between parent and child processes
-	if (pipe(parentWrite) == -1 || pipe(childWrite) == -1)
+	if (pipe(backend->parentWrite) == -1 || pipe(backend->childWrite) == -1)
 	{
 		perror("Failed to create pipes");
 		exit(EXIT_FAILURE);
@@ -175,50 +168,52 @@ void addr2line_init(char *filename, int options)
 	if (fork() == 0)
 	{
 		// In the child process
-		close(parentWrite[WRITE_END]); // Close unused 'write end' of the parent_write pipe
-		close(childWrite[READ_END]);   // Close unused 'read end' of the child_write pipe
+		close(backend->parentWrite[WRITE_END]); // Close unused 'write end' of the parent_write pipe
+		close(backend->childWrite[READ_END]);   // Close unused 'read end' of the child_write pipe
 
-		if ((dup2(parentWrite[READ_END], STDIN_FILENO) == -1) || // Get stdin to read from from parent_write[READ_END] pipe
-			(dup2(childWrite[WRITE_END], STDOUT_FILENO) == -1))  // Redirect stdout to write to child_write[WRITE_END] pipe
+		if ((dup2(backend->parentWrite[READ_END], STDIN_FILENO) == -1) || // Get stdin to read from from parent_write[READ_END] pipe
+			(dup2(backend->childWrite[WRITE_END], STDOUT_FILENO) == -1))  // Redirect stdout to write to child_write[WRITE_END] pipe
 		{
 			perror("Failed to duplicate file descriptor");
 			exit(EXIT_FAILURE);
 		}
 		
 		// Close the duplicated file descriptors
-		close(parentWrite[READ_END]);
-		close(childWrite[WRITE_END]);
+		close(backend->parentWrite[READ_END]);
+		close(backend->childWrite[WRITE_END]);
 
 		// Set up arguments for execution
-		char *argv_elfutils[] = { ELFUTILS_ADDR2LINE, "-C", "-f", "-i", (is_binary ? "-e" : "-M"), filename, NULL };
-		char *argv_binutils[] = { BINUTILS_ADDR2LINE, "-C", "-f", "-e", filename, NULL };
+		char *argv_elfutils[] = { ELFUTILS_ADDR2LINE, "-C", "-f", "-i", (is_binary ? "-e" : "-M"), object, NULL };
+		char *argv_binutils[] = { BINUTILS_ADDR2LINE, "-C", "-f", "-e", object, NULL };
 		char **argv = NULL;
 #if defined(HAVE_ELFUTILS)
-		if (useBackend == USE_ELFUTILS) {
+		if (backend->useBackend == USE_ELFUTILS) {
 			argv = argv_elfutils;			
 		}
 #endif
 #if defined(HAVE_BINUTILS)
-		if (useBackend == USE_BINUTILS) {
+		if (backend->useBackend == USE_BINUTILS) {
 			argv = argv_binutils;
 		}
 #endif
 
 		// Replaces the current process with addr2line backend
 		execvp(argv[0], argv);
+		return NULL;
 	}
 	else 
 	{
 		// In the parent process
-		close(parentWrite[READ_END]); // Close unused 'read end' of the parent_write pipe
-		close(childWrite[WRITE_END]); // Close unused 'write end' of the child_write pipe
+		close(backend->parentWrite[READ_END]); // Close unused 'read end' of the parent_write pipe
+		close(backend->childWrite[WRITE_END]); // Close unused 'write end' of the child_write pipe
 
 		// Open a FILE stream to read addr2line's backend output
-		addr2lineOutputStream = fdopen(childWrite[READ_END], "r");
-		if (addr2lineOutputStream == NULL) {
+		backend->outputStream = fdopen(backend->childWrite[READ_END], "r");
+		if (backend->outputStream == NULL) {
 			perror("fdopen failed");
 			exit(EXIT_FAILURE);
 		}
+		return backend;
 	}
 }
 
@@ -227,13 +222,14 @@ void addr2line_init(char *filename, int options)
  * 
  * Translate a memory address into the corresponding function, file, line, and column using addr2line.
  * 
+ * @param backend       The handler of the running addr2line process
  * @param address	The memory address to translate.
  * @param function 	Output buffer for the function name.
  * @param file 		Output buffer for the filename.
  * @param line		Output pointer for the line number.
  * @param column	Output pointer for the column number.
  */
-void addr2line_translate(void *address, char **function, char **file, int *line, int *column)
+void addr2line_translate(addr2line_process_t *backend, void *address, char **function, char **file, int *line, int *column)
 {
 	char address_str[BUFSIZ];
 	char buf[BUFSIZ];
@@ -241,11 +237,11 @@ void addr2line_translate(void *address, char **function, char **file, int *line,
 	// Format the address pointer as a string and pass it to addr2line
 	sprintf(address_str, "%p\n", address); 
 	fprintf(stderr, "[DEBUG] addr2line_translate: address_str=%s\n", address_str);
-	write_with_retry(parentWrite[WRITE_END], address_str, strlen(address_str));
+	write_with_retry(backend->parentWrite[WRITE_END], address_str, strlen(address_str));
 
 	// Read the function name from addr2line's output
 	*function = NULL;
-	if (fgets(buf, sizeof(buf), addr2lineOutputStream) != NULL)
+	if (fgets(buf, sizeof(buf), backend->outputStream) != NULL)
 	{
 		if (buf[strlen(buf)-1] == '\n') {
 			buf[strlen(buf)-1] = '\0'; // Remove the newline character
@@ -259,11 +255,11 @@ void addr2line_translate(void *address, char **function, char **file, int *line,
 	// Read the filename, line number, and column number from addr2line's output
 	*file = NULL;
 	*line = *column = 0;
-	if (fgets(buf, sizeof(buf), addr2lineOutputStream) != NULL)
+	if (fgets(buf, sizeof(buf), backend->outputStream) != NULL)
 	{
 #if defined(HAVE_ELFUTILS)
 		// Parsing the column number (currently only available with elfutils)
-		if (useBackend == USE_ELFUTILS)
+		if (backend->useBackend == USE_ELFUTILS)
 		{	
 			char *last_colon = strrchr(buf, ':'); 
 			if (last_colon != NULL)
@@ -287,6 +283,6 @@ void addr2line_translate(void *address, char **function, char **file, int *line,
 	}
 
 	// Make sure we return something for function and file when the translation fails
-	if (*function == NULL) *function = strdup((setOptions & OPTION_KEEP_UNRESOLVED_ADDRESSES) ? address_str : UNKNOWN_ADDRESS);
-	if (*file == NULL) *file = strdup((setOptions & OPTION_KEEP_UNRESOLVED_ADDRESSES) ? address_str : UNKNOWN_ADDRESS);
+	if (*function == NULL) *function = strdup((backend->setOptions & OPTION_KEEP_UNRESOLVED_ADDRESSES) ? address_str : UNKNOWN_ADDRESS);
+	if (*file == NULL) *file = strdup((backend->setOptions & OPTION_KEEP_UNRESOLVED_ADDRESSES) ? address_str : UNKNOWN_ADDRESS);
 }

@@ -125,10 +125,13 @@ addr2line_process_t * addr2line_exec(char *object, int options)
 	// Hack to prevent our tracing libraries to trigger for the exec'd addr2line command
 	if (options & OPTION_CLEAR_PRELOAD) unsetenv("LD_PRELOAD");
 
-	// Hack to prevent recursive initialization when addr2line_init is called from a library constructor, and the forked child process triggers the constructor again
+#if 0 // This has to go if we want to allow multiple calls to exec
+ 	// Hack to prevent recursive initialization when addr2line_init is called from a library constructor, and the forked child process triggers the constructor again
 	char *addr2line_started = getenv("LIBADDR2LINE_STARTED");
 	if (addr2line_started) return NULL;
 	putenv("LIBADDR2LINE_STARTED=1");
+#endif 
+
 
 
 	if ((backend = (addr2line_process_t *)malloc(sizeof(addr2line_process_t))) == NULL)

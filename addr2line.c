@@ -110,13 +110,15 @@ static ssize_t write_with_retry(int fd, const void *buf, size_t count) {
 }
 
 /** 
- * addr2line_init
+ * addr2line_exec
  * 
- * Initialize the addr2line process with the given maps file.
- * This function sets up pipes for inter-process communication, forks a child
- * process to execute addr2line, and connects the pipes to the child's stdin and stdout.
+ * Runs one or more addr2line processes for the given object, which can be either a
+ * binary or a dump of the /proc/self/maps file. This function sets up pipes for 
+ * inter-process communication, forks a child process to execute addr2line, and 
+ * connects the pipes to the child's stdin and stdout.
  * 
  * @param object Path either to the binary or to a dump of the /proc/self/maps.
+ * @param options Configuration options for the addr2line process.
  */
 addr2line_process_t * addr2line_exec(char *object, int options)
 {
@@ -125,23 +127,12 @@ addr2line_process_t * addr2line_exec(char *object, int options)
 	// Hack to prevent our tracing libraries to trigger for the exec'd addr2line command
 	if (options & OPTION_CLEAR_PRELOAD) unsetenv("LD_PRELOAD");
 
-#if 0 // This has to go if we want to allow multiple calls to exec
- 	// Hack to prevent recursive initialization when addr2line_init is called from a library constructor, and the forked child process triggers the constructor again
-	char *addr2line_started = getenv("LIBADDR2LINE_STARTED");
-	if (addr2line_started) return NULL;
-	putenv("LIBADDR2LINE_STARTED=1");
-#endif 
-
-
-
 	if ((backend = (addr2line_process_t *)malloc(sizeof(addr2line_process_t))) == NULL)
 	{
 		fprintf(stderr, "ERROR: addr2line_init: Out of memory\n");
 		exit(EXIT_FAILURE);
 	}
 	
-
-#warning "Make sure the tests now use the new options flag"
 	// Set the configuration options
 	backend->setOptions = options;
 
@@ -150,7 +141,12 @@ addr2line_process_t * addr2line_exec(char *object, int options)
 
 	// Check if the object is a binary file or a maps file
 	int is_binary = is_binary_file(object);
+	if (!is_binary) {
+		backend->mappingList = parse_maps_file(object);
+	}
 
+#if 1 
+#warning "This has to go, make binutils run addr2line forks for each line of the maps file"
 #if defined(HAVE_BINUTILS)
 	// Check for invalid backend/object combinations
 	if ((backend->useBackend == USE_BINUTILS) && (!is_binary))
@@ -158,6 +154,7 @@ addr2line_process_t * addr2line_exec(char *object, int options)
 		fprintf(stderr, "ERROR: addr2line_init: binutils backend can only be used with binary files\n");
 		exit(EXIT_FAILURE);	
 	}
+#endif
 #endif
 
 	// Creating pipes for communication between parent and child processes
@@ -231,8 +228,9 @@ addr2line_process_t * addr2line_exec(char *object, int options)
  * @param file 		Output buffer for the filename.
  * @param line		Output pointer for the line number.
  * @param column	Output pointer for the column number.
+ * @param mapping	Output buffer for the mapping name.
  */
-void addr2line_translate(addr2line_process_t *backend, void *address, char **function, char **file, int *line, int *column)
+void addr2line_translate(addr2line_process_t *backend, void *address, char **function, char **file, int *line, int *column, char **mapping)
 {
 	char address_str[BUFSIZ];
 	char buf[BUFSIZ];
@@ -288,4 +286,10 @@ void addr2line_translate(addr2line_process_t *backend, void *address, char **fun
 	// Make sure we return something for function and file when the translation fails
 	if (*function == NULL) *function = strdup((backend->setOptions & OPTION_KEEP_UNRESOLVED_ADDRESSES) ? address_str : UNKNOWN_ADDRESS);
 	if (*file == NULL) *file = strdup((backend->setOptions & OPTION_KEEP_UNRESOLVED_ADDRESSES) ? address_str : UNKNOWN_ADDRESS);
+
+	// Look for the mapping name in the /proc/self/maps file
+	maps_entry_t *found_mapping = find_address_in_exec_mappings(backend->mappingList, (unsigned long)address);
+	if (found_mapping  != NULL) {
+		*mapping = strdup(found_mapping->pathname);
+	}
 }

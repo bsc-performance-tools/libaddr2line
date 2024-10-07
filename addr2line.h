@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdio.h>
+#include "maps.h"
 
 // Available configuration options
 #define OPTION_CLEAR_PRELOAD             (1 << 0) // Clears LD_PRELOAD to prevent other libraries to be loaded when addr2line command is exec'd
@@ -18,8 +19,9 @@ typedef struct addr2line_process
 	int useBackend;      // User can override the default backend through the environment variable LIBADDR2LINE_BACKEND
 	int setOptions;      // Selected configuration options
 	FILE *outputStream;  // File descriptor for reading addr2line output
+	maps_t *mappingList; // List of mappings from the /proc/self/maps file
 } addr2line_process_t;
 
 // Function prototypes
 addr2line_process_t * addr2line_exec(char *object, int options);
-void addr2line_translate(addr2line_process_t *backend, void *address, char **function, char **file, int *line, int *column);
+void addr2line_translate(addr2line_process_t *backend, void *address, char **function, char **file, int *line, int *column, char **mapping);

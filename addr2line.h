@@ -6,6 +6,7 @@
 // Available configuration options
 #define OPTION_CLEAR_PRELOAD             (1 << 0) // Clears LD_PRELOAD to prevent other libraries to be loaded when addr2line command is exec'd
 #define OPTION_KEEP_UNRESOLVED_ADDRESSES (1 << 1) // Keep the unresolved addresses in the output instead of "??"
+#define OPTION_NON_PERSISTENT            (1 << 2) // Do not keep the addr2line process running in the background
 
 enum {
 	READ_END = 0,

@@ -138,23 +138,24 @@ addr2line_t * addr2line_exec(char *object, int options)
 	// Store the input object
 	backend->inputObject = strdup(object);
 
+	// Check if the object is a binary file or a maps file
+	int is_binary = is_binary_file(object);
+	int is_mapping = !is_binary;
+
 	// Set the configuration options
 	backend->setOptions = options;
 
 	// Check the backend to use
 	backend->useBackend = select_backend();
 
-	// Check if the object is a binary file or a maps file
-	int is_binary = is_binary_file(object);
-	int is_mapping = !is_binary;
-
+	// Parse the /proc/self/maps file if given
 	backend->procMaps = NULL;
 	if (is_mapping)
 	{
-		// Parse the /proc/self/maps file
 		backend->procMaps = maps_parse_file(object);
 	}
 
+	// Determine the number of addr2line processes to spawn
 	if ((is_mapping) && (backend->useBackend == USE_BINUTILS)) 
 	{
 		/*
@@ -163,14 +164,13 @@ addr2line_t * addr2line_exec(char *object, int options)
 		 * executable mapping in the /proc/self/maps file.
 		 */
 		int num_exec_entries = exec_mappings_size(backend->procMaps);
+		backend->numProcesses = num_exec_entries;
 
 		backend->processList = malloc(sizeof(addr2line_process_t) * num_exec_entries);
 		if (backend->processList == NULL) {
 			fprintf(stderr, "ERROR: addr2line_exec: Out of memory\n");
 			exit(EXIT_FAILURE);
 		}
-		backend->numProcesses = num_exec_entries;
-		fprintf(stderr, "[DEBUG] num_exec_entries: %d\n", num_exec_entries);
 
 		// Associate each executable mapping with its corresponding addr2line process
 		maps_entry_t *exec_entry = exec_mappings(backend->procMaps);
@@ -268,7 +268,7 @@ addr2line_t * addr2line_exec(char *object, int options)
  * 
  * Translate a memory address into the corresponding function, file, line, and column using addr2line.
  * 
- * @param backend       The handler of the running addr2line process
+ * @param backend   The handler of the running addr2line process
  * @param address	The memory address to translate.
  * @param function 	Output buffer for the function name.
  * @param file 		Output buffer for the filename.
@@ -352,10 +352,22 @@ void addr2line_translate(addr2line_t *backend, void *address, char **function, c
 	// Get the mapping name
 	if (translator->execMapping != NULL) 
 	{
+		// If the addr2line process is associated with a specific mapping, use the mapping name
 		*mapping_name = strdup(translator->execMapping->pathname);
 	}
-	else {
-		// If no maps file was given, use the input object as the mapping name
-		*mapping_name = strdup( (backend->procMaps != NULL ? maps_main_exec(backend->procMaps) : backend->inputObject));
+	else
+	{
+		if (backend->procMaps != NULL)
+		{
+			// If the input is a maps file, find the mapping that contains the address
+			maps_entry_t *entry = search_in_exec_mappings(backend->procMaps, (unsigned long)address);
+			if (entry != NULL) *mapping_name = strdup(entry->pathname);
+			else *mapping_name = strdup(maps_main_exec(backend->procMaps));
+		}
+		else
+		{
+			// If no maps file was given, use the input object as the mapping name
+			*mapping_name = strdup(backend->inputObject);
+		}
 	}
 }

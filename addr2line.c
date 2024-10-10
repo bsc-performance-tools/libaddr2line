@@ -170,6 +170,7 @@ addr2line_t * addr2line_exec(char *object, int options)
 			exit(EXIT_FAILURE);
 		}
 		backend->numProcesses = num_exec_entries;
+		fprintf(stderr, "[DEBUG] num_exec_entries: %d\n", num_exec_entries);
 
 		// Associate each executable mapping with its corresponding addr2line process
 		maps_entry_t *exec_entry = exec_mappings(backend->procMaps);
@@ -242,7 +243,7 @@ addr2line_t * addr2line_exec(char *object, int options)
 				argv = argv_binutils;
 			}
 	#endif
-
+			fprintf(stderr, "[DEBUG] Launching %s %s %s %s %s\n", argv[0], argv[1], argv[2], argv[3], argv[4]);
 			// Replaces the current process with addr2line backend
 			execvp(argv[0], argv);
 		}
@@ -291,6 +292,8 @@ void addr2line_translate(addr2line_t *backend, void *address, char **function, c
 			if (address_in_mapping(current_process->execMapping, (unsigned long)address))
 			{
 				translator = current_process;
+				// For individual addr2line processes per mapping, adjust the address by subtracting the mapping start and adding the offset.
+				address = (void *)((unsigned long)address - current_process->execMapping->start) + current_process->execMapping->offset;
 				break;
 			}
 		}

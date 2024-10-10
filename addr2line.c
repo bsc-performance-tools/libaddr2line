@@ -195,13 +195,41 @@ addr2line_t * addr2line_exec(char *object, int options)
 		backend->numProcesses = 1;
 	}
 
-	// Spawn an addr2line process for each mapping (when using binutils with /proc/self/maps), or a single instance for other scenarios.
+	// Defer the fork until the first translation
 	for (int i = 0; i < backend->numProcesses; ++i) 
 	{
-		addr2line_process_t *current_process = &backend->processList[i];
+		backend->processList[i].isForked = 0;
+	}
 
+	return backend;
+}
+
+// XXX Fix this comment
+// Spawn an addr2line process for each mapping (when using binutils with /proc/self/maps), or a single instance for other scenarios.
+
+static addr2line_process_t * select_translator(addr2line_t *backend, void *address)
+{
+	int is_binary = (backend->procMaps == NULL);
+
+	addr2line_process_t *translator = &backend->processList[0];
+	if (backend->numProcesses > 1)
+	{
+		// Find the mapping that contains the address
+		for (int i = 0; i < backend->numProcesses; ++i)
+		{
+			addr2line_process_t *current_process = &backend->processList[i];
+			if (address_in_mapping(current_process->execMapping, (unsigned long)address))
+			{
+				translator = current_process;
+				break;
+			}
+		}
+	}	
+
+	if (!translator->isForked)
+	{
 		// Creating pipes for communication between parent and child processes
-		if (pipe(current_process->parentWrite) == -1 || pipe(current_process->childWrite) == -1)
+		if (pipe(translator->parentWrite) == -1 || pipe(translator->childWrite) == -1)
 		{
 			perror("Failed to create pipes");
 			exit(EXIT_FAILURE);
@@ -211,27 +239,27 @@ addr2line_t * addr2line_exec(char *object, int options)
 		if (fork() == 0)
 		{
 			// In the child process
-			close(current_process->parentWrite[WRITE_END]); // Close unused 'write end' of the parent_write pipe
-			close(current_process->childWrite[READ_END]);   // Close unused 'read end' of the child_write pipe
+			close(translator->parentWrite[WRITE_END]); // Close unused 'write end' of the parent_write pipe
+			close(translator->childWrite[READ_END]);   // Close unused 'read end' of the child_write pipe
 
-			if ((dup2(current_process->parentWrite[READ_END], STDIN_FILENO) == -1) || // Get stdin to read from from parent_write[READ_END] pipe
-				(dup2(current_process->childWrite[WRITE_END], STDOUT_FILENO) == -1))  // Redirect stdout to write to child_write[WRITE_END] pipe
+			if ((dup2(translator->parentWrite[READ_END], STDIN_FILENO) == -1) || // Get stdin to read from from parent_write[READ_END] pipe
+				(dup2(translator->childWrite[WRITE_END], STDOUT_FILENO) == -1))  // Redirect stdout to write to child_write[WRITE_END] pipe
 			{
 				perror("Failed to duplicate file descriptor");
 				exit(EXIT_FAILURE);
 			}
 			
 			// Close the duplicated file descriptors
-			close(current_process->parentWrite[READ_END]);
-			close(current_process->childWrite[WRITE_END]);
+			close(translator->parentWrite[READ_END]);
+			close(translator->childWrite[WRITE_END]);
 
 			/*
-			 * Set up arguments for execution
-			 * elfutils uses a single addr2line process to handle either the specified binary (-e binary) or /proc/self/maps (-M maps_file).
-			 * binutils uses a single addr2line process for a specified binary (-e binary), or multiple processes for each executable mapping (-e mapping1, -e mapping2, etc.).
-             */
-			char *argv_elfutils[] = { ELFUTILS_ADDR2LINE, "-C", "-f", "-i", (is_binary ? "-e" : "-M"), object, NULL };
-			char *argv_binutils[] = { BINUTILS_ADDR2LINE, "-C", "-f", "-e", (is_binary ? object : current_process->execMapping->pathname), NULL };
+			* Set up arguments for execution
+			* elfutils uses a single addr2line process to handle either the specified binary (-e binary) or /proc/self/maps (-M maps_file).
+			* binutils uses a single addr2line process for a specified binary (-e binary), or multiple processes for each executable mapping (-e mapping1, -e mapping2, etc.).
+			*/
+			char *argv_elfutils[] = { ELFUTILS_ADDR2LINE, "-C", "-f", "-i", (is_binary ? "-e" : "-M"), backend->inputObject, NULL };
+			char *argv_binutils[] = { BINUTILS_ADDR2LINE, "-C", "-f", "-e", (is_binary ? backend->inputObject : translator->execMapping->pathname), NULL };
 			char **argv = NULL;
 	#if defined(HAVE_ELFUTILS)
 			if (backend->useBackend == USE_ELFUTILS) {
@@ -248,19 +276,21 @@ addr2line_t * addr2line_exec(char *object, int options)
 		}
 		else 
 		{
+			translator->isForked = 1;
+
 			// In the parent process
-			close(current_process->parentWrite[READ_END]); // Close unused 'read end' of the parent_write pipe
-			close(current_process->childWrite[WRITE_END]); // Close unused 'write end' of the child_write pipe
+			close(translator->parentWrite[READ_END]); // Close unused 'read end' of the parent_write pipe
+			close(translator->childWrite[WRITE_END]); // Close unused 'write end' of the child_write pipe
 
 			// Open a FILE stream to read addr2line's backend output
-			current_process->outputStream = fdopen(current_process->childWrite[READ_END], "r");
-			if (current_process->outputStream == NULL) {
+			translator->outputStream = fdopen(translator->childWrite[READ_END], "r");
+			if (translator->outputStream == NULL) {
 				perror("fdopen failed");
 				exit(EXIT_FAILURE);
 			}
 		}
 	}
-	return backend;
+	return translator;
 }
 
 /**
@@ -281,22 +311,13 @@ void addr2line_translate(addr2line_t *backend, void *address, char **function, c
 	char address_str[BUFSIZ];
 	char buf[BUFSIZ];
 
-	addr2line_process_t *translator = &backend->processList[0];
-	if (backend->numProcesses > 1)
+	addr2line_process_t *translator = select_translator(backend, address);
+
+	// For individual addr2line processes per mapping (only binutils), adjust the address by subtracting the mapping start and adding the offset.
+	if (translator->execMapping != NULL)
 	{
-		// Find the mapping that contains the address
-		for (int i = 0; i < backend->numProcesses; ++i)
-		{
-			addr2line_process_t *current_process = &backend->processList[i];
-			if (address_in_mapping(current_process->execMapping, (unsigned long)address))
-			{
-				translator = current_process;
-				// For individual addr2line processes per mapping (only binutils), adjust the address by subtracting the mapping start and adding the offset.
-				address = (void *)((unsigned long)address - current_process->execMapping->start) + current_process->execMapping->offset;
-				break;
-			}
-		}
-	}	
+		address = (void *)((unsigned long)address - translator->execMapping->start) + translator->execMapping->offset;
+	}
 
 	// Format the address pointer as a string and pass it to addr2line
 	sprintf(address_str, "%p\n", address); 

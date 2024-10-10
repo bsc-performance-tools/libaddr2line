@@ -19,6 +19,7 @@ typedef struct addr2line_process
 	int childWrite[2];  
 	FILE *outputStream;        // File descriptor for reading addr2line output
 	maps_entry_t *execMapping; // Executable mapping associated with the addr2line process (only used when binutils is the backend and the input is a /proc/self/maps file)
+	int isForked;              // Flag to indicate if the process has been forked already (deferred until the first translation)
 } addr2line_process_t;
 
 typedef struct addr2line

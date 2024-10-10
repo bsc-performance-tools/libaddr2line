@@ -14,14 +14,25 @@ enum {
 
 typedef struct addr2line_process
 {
-	int parentWrite[2];  // Pipes for communication between parent and child processes
+	int parentWrite[2];        // Pipes for communication between parent and child processes
 	int childWrite[2];  
-	int useBackend;      // User can override the default backend through the environment variable LIBADDR2LINE_BACKEND
-	int setOptions;      // Selected configuration options
-	FILE *outputStream;  // File descriptor for reading addr2line output
-	maps_t *mappingList; // List of mappings from the /proc/self/maps file
+	FILE *outputStream;        // File descriptor for reading addr2line output
+	maps_entry_t *execMapping; // Executable mapping associated with the addr2line process (only used when binutils is the backend and the input is a /proc/self/maps file)
 } addr2line_process_t;
 
+typedef struct addr2line
+{
+	char *inputObject;                // Path to the input object (either a binary or a dump of the /proc/self/maps)
+	int useBackend;                   // User can override the default backend through the environment variable LIBADDR2LINE_BACKEND
+	int setOptions;                   // Selected configuration options
+
+	maps_t *procMaps;                 // Parsed /proc/self/maps file (only used when the input is a /proc/self/maps file)
+
+	addr2line_process_t *processList; // Array of addr2line processes (> 1 when binutils is the backend and the input is a /proc/self/maps file, 1 otherwise)
+	int numProcesses;
+} addr2line_t;
+
+
 // Function prototypes
-addr2line_process_t * addr2line_exec(char *object, int options);
-void addr2line_translate(addr2line_process_t *backend, void *address, char **function, char **file, int *line, int *column, char **mapping);
+addr2line_t * addr2line_exec(char *object, int options);
+void addr2line_translate(addr2line_t *backend, void *address, char **function, char **file, int *line, int *column, char **mapping_name);

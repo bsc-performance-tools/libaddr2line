@@ -6,7 +6,7 @@
 #define SKIP_SPECIAL_MAPPINGS // Define this to exclude special entries from the list of executable mappings (e.g., stack, heap, vdso, vvar, vsyscall, etc.) 
 
 /**
- * parse_maps_file
+ * maps_parse_file
  * 
  * Parse the /proc/self/maps file and store the entries in a maps_t structure.
  * The list of mappings has two chainings: one for all mappings, and another 
@@ -15,7 +15,7 @@
  * @param maps_file Path to the /proc/self/maps file
  * @param mapping_list Pointer to the maps_t structure to store the mappings
  */
-maps_t * parse_maps_file(char *maps_file) {
+maps_t * maps_parse_file(char *maps_file) {
     int num_all_entries = 0, num_exec_entries = 0; 
     maps_entry_t *head_all = NULL, *tail_all = NULL;
     maps_entry_t *head_exec = NULL, *tail_exec = NULL;
@@ -25,6 +25,7 @@ maps_t * parse_maps_file(char *maps_file) {
         return NULL;
     }
 
+    // Open the maps file
     FILE *fd = fopen(maps_file, "r");
     if (fd != NULL)
     {
@@ -82,19 +83,27 @@ maps_t * parse_maps_file(char *maps_file) {
         fclose(fd);
     }
     // Store the lists in the maps_t structure
-    mapping_list->list_all = head_all;
+    mapping_list->all_entries = head_all;
     mapping_list->num_all_entries = num_all_entries;
-    mapping_list->list_exec = head_exec;
+    mapping_list->exec_entries = head_exec;
     mapping_list->num_exec_entries = num_exec_entries;
     // Get the path to the main executable from the first entry in the list of executable mappings
     mapping_list->main_exec = strdup((head_exec == NULL ? "./a.out" : head_exec->pathname));
+    return mapping_list;
 }
 
-void free_maps(maps_t *mapping_list) 
+/**
+ * maps_free
+ * 
+ * Free the memory used by the maps_t structure.
+ * 
+ * @param mapping_list Pointer to the maps_t structure to free
+ */
+void maps_free(maps_t *mapping_list) 
 {
     if (mapping_list != NULL) 
     {
-        maps_entry_t *entry = mapping_list->list_all;
+        maps_entry_t *entry = mapping_list->all_entries;
         while (entry != NULL)
         {
             maps_entry_t *next = entry->next_all;
@@ -106,7 +115,16 @@ void free_maps(maps_t *mapping_list)
     }
 }
 
-static maps_entry_t * get_entry_by_address(maps_entry_t *mapping_list, unsigned long address) {
+/**
+ * maps_find_by_address
+ * 
+ * Find the entry in the list of mappings that contains the specified address.
+ * 
+ * @param mapping_list Pointer to the list of mappings
+ * @param address Address to search for
+ * @return Pointer to the entry that contains the address, or NULL if not found
+ */
+maps_entry_t * maps_find_by_address(maps_entry_t *mapping_list, unsigned long address) {
     maps_entry_t *entry = mapping_list;
     while (entry != NULL)
     {
@@ -118,12 +136,3 @@ static maps_entry_t * get_entry_by_address(maps_entry_t *mapping_list, unsigned 
     }
     return NULL;
 }
-
-maps_entry_t * find_address_in_mappings(maps_t *mapping_list, unsigned long address) {
-    return get_entry_by_address(mapping_list->list_all, address);
-}
-
-maps_entry_t * find_address_in_exec_mappings(maps_t *mapping_list, unsigned long address) {
-    return get_entry_by_address(mapping_list->list_exec, address);
-}
-

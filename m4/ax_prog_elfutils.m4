@@ -16,6 +16,14 @@ AC_DEFUN([AX_PROG_ELFUTILS],
     AC_MSG_RESULT([${elfutils_cmd}])
     AC_DEFINE([HAVE_ELFUTILS], [1], [Define to 1 if elfutils' addr2line command is available])
     AC_DEFINE_UNQUOTED([ELFUTILS_ADDR2LINE], ["${elfutils_cmd}"], [Path to elfutil's addr2line command])
+
+    # Get the root path
+    elfutils_home=`dirname $(dirname ${elfutils_cmd})`  
+    
+    # Test for includes
+    CFLAGS="-I${elfutils_home}/include"
+    AC_CHECK_HEADERS([libelf.h], [], [AC_MSG_ERROR([Required header libelf.h not found in ${elfutils_home}/include. Ensure it's installed.])])
+    AC_CHECK_HEADERS([gelf.h], [], [AC_MSG_ERROR([Required header gelf.h not found in ${elfutils_home}/include. Ensure it's installed.])])
   else
     AC_MSG_RESULT([not available])
   fi

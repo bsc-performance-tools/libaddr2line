@@ -119,20 +119,25 @@ static ssize_t write_with_retry(int fd, const void *buf, size_t count) {
  * 
  * @param object Path either to the binary or to a dump of the /proc/self/maps.
  * @param options Configuration options for the addr2line process.
+ * @return addr2line_t structure containing the addr2line backend.
  */
-addr2line_process_t * addr2line_exec(char *object, int options)
+addr2line_t * addr2line_exec(char *object, int options)
 {
-	addr2line_process_t *backend = NULL;
-
+	addr2line_t *backend = NULL;
+	
 	// Hack to prevent our tracing libraries to trigger for the exec'd addr2line command
 	if (options & OPTION_CLEAR_PRELOAD) unsetenv("LD_PRELOAD");
 
-	if ((backend = (addr2line_process_t *)malloc(sizeof(addr2line_process_t))) == NULL)
-	{
-		fprintf(stderr, "ERROR: addr2line_init: Out of memory\n");
+	// Allocate memory for the addr2line backend
+	backend = malloc(sizeof(addr2line_t));
+	if (backend == NULL) {
+		fprintf(stderr, "ERROR: addr2line_exec: Out of memory\n");
 		exit(EXIT_FAILURE);
 	}
-	
+
+	// Store the input object
+	backend->inputObject = strdup(object);
+
 	// Set the configuration options
 	backend->setOptions = options;
 
@@ -141,80 +146,121 @@ addr2line_process_t * addr2line_exec(char *object, int options)
 
 	// Check if the object is a binary file or a maps file
 	int is_binary = is_binary_file(object);
-	if (!is_binary) {
-		backend->mappingList = parse_maps_file(object);
+	int is_mapping = !is_binary;
+
+	backend->procMaps = NULL;
+	if (is_mapping)
+	{
+		// Parse the /proc/self/maps file
+		backend->procMaps = maps_parse_file(object);
 	}
 
-#if 1 
-#warning "This has to go, make binutils run addr2line forks for each line of the maps file"
-#if defined(HAVE_BINUTILS)
-	// Check for invalid backend/object combinations
-	if ((backend->useBackend == USE_BINUTILS) && (!is_binary))
+	if ((is_mapping) && (backend->useBackend == USE_BINUTILS)) 
 	{
-		fprintf(stderr, "ERROR: addr2line_init: binutils backend can only be used with binary files\n");
-		exit(EXIT_FAILURE);	
-	}
-#endif
-#endif
+		/*
+		 * binutils can not take a /proc/self/maps file as input, 
+		 * so we will instantiate individual addr2line processes for each 
+		 * executable mapping in the /proc/self/maps file.
+		 */
+		int num_exec_entries = exec_mappings_size(backend->procMaps);
 
-	// Creating pipes for communication between parent and child processes
-	if (pipe(backend->parentWrite) == -1 || pipe(backend->childWrite) == -1)
-	{
-		perror("Failed to create pipes");
-		exit(EXIT_FAILURE);
-	}
-
-	// Fork a child process to run addr2line as a continuous background process
-	if (fork() == 0)
-	{
-		// In the child process
-		close(backend->parentWrite[WRITE_END]); // Close unused 'write end' of the parent_write pipe
-		close(backend->childWrite[READ_END]);   // Close unused 'read end' of the child_write pipe
-
-		if ((dup2(backend->parentWrite[READ_END], STDIN_FILENO) == -1) || // Get stdin to read from from parent_write[READ_END] pipe
-			(dup2(backend->childWrite[WRITE_END], STDOUT_FILENO) == -1))  // Redirect stdout to write to child_write[WRITE_END] pipe
-		{
-			perror("Failed to duplicate file descriptor");
+		backend->processList = malloc(sizeof(addr2line_process_t) * num_exec_entries);
+		if (backend->processList == NULL) {
+			fprintf(stderr, "ERROR: addr2line_exec: Out of memory\n");
 			exit(EXIT_FAILURE);
 		}
-		
-		// Close the duplicated file descriptors
-		close(backend->parentWrite[READ_END]);
-		close(backend->childWrite[WRITE_END]);
+		backend->numProcesses = num_exec_entries;
 
-		// Set up arguments for execution
-		char *argv_elfutils[] = { ELFUTILS_ADDR2LINE, "-C", "-f", "-i", (is_binary ? "-e" : "-M"), object, NULL };
-		char *argv_binutils[] = { BINUTILS_ADDR2LINE, "-C", "-f", "-e", object, NULL };
-		char **argv = NULL;
-#if defined(HAVE_ELFUTILS)
-		if (backend->useBackend == USE_ELFUTILS) {
-			argv = argv_elfutils;			
+		// Associate each executable mapping with its corresponding addr2line process
+		maps_entry_t *exec_entry = exec_mappings(backend->procMaps);
+		for (int i = 0; i < num_exec_entries; ++i) 
+		{
+			backend->processList[i].execMapping = exec_entry;
+			exec_entry = next_exec_mapping(exec_entry);
 		}
-#endif
-#if defined(HAVE_BINUTILS)
-		if (backend->useBackend == USE_BINUTILS) {
-			argv = argv_binutils;
-		}
-#endif
-
-		// Replaces the current process with addr2line backend
-		execvp(argv[0], argv);
-		return NULL;
 	}
 	else 
 	{
-		// In the parent process
-		close(backend->parentWrite[READ_END]); // Close unused 'read end' of the parent_write pipe
-		close(backend->childWrite[WRITE_END]); // Close unused 'write end' of the child_write pipe
-
-		// Open a FILE stream to read addr2line's backend output
-		backend->outputStream = fdopen(backend->childWrite[READ_END], "r");
-		if (backend->outputStream == NULL) {
-			perror("fdopen failed");
+		/*
+		* elfutils can directly process a /proc/self/maps file, allowing us to use a single addr2line instance.
+		* Both elfutils and binutils can also handle a given binary file directly, which similarly requires only one addr2line instance.
+		*/
+		backend->processList = malloc(sizeof(addr2line_process_t));
+		if (backend->processList == NULL) {
+			fprintf(stderr, "ERROR: addr2line_exec: Out of memory\n");
 			exit(EXIT_FAILURE);
 		}
-		return backend;
+		backend->processList[0].execMapping = NULL; // No mapping for a single addr2line process
+		backend->numProcesses = 1;
 	}
+
+	// Spawn an addr2line process for each mapping (when using binutils with /proc/self/maps), or a single instance for other scenarios.
+	for (int i = 0; i < backend->numProcesses; ++i) 
+	{
+		addr2line_process_t *current_process = &backend->processList[i];
+
+		// Creating pipes for communication between parent and child processes
+		if (pipe(current_process->parentWrite) == -1 || pipe(current_process->childWrite) == -1)
+		{
+			perror("Failed to create pipes");
+			exit(EXIT_FAILURE);
+		}
+
+		// Fork a child process to run addr2line as a continuous background process
+		if (fork() == 0)
+		{
+			// In the child process
+			close(current_process->parentWrite[WRITE_END]); // Close unused 'write end' of the parent_write pipe
+			close(current_process->childWrite[READ_END]);   // Close unused 'read end' of the child_write pipe
+
+			if ((dup2(current_process->parentWrite[READ_END], STDIN_FILENO) == -1) || // Get stdin to read from from parent_write[READ_END] pipe
+				(dup2(current_process->childWrite[WRITE_END], STDOUT_FILENO) == -1))  // Redirect stdout to write to child_write[WRITE_END] pipe
+			{
+				perror("Failed to duplicate file descriptor");
+				exit(EXIT_FAILURE);
+			}
+			
+			// Close the duplicated file descriptors
+			close(current_process->parentWrite[READ_END]);
+			close(current_process->childWrite[WRITE_END]);
+
+			/*
+			 * Set up arguments for execution
+			 * elfutils uses a single addr2line process to handle either the specified binary (-e binary) or /proc/self/maps (-M maps_file).
+			 * binutils uses a single addr2line process for a specified binary (-e binary), or multiple processes for each executable mapping (-e mapping1, -e mapping2, etc.).
+             */
+			char *argv_elfutils[] = { ELFUTILS_ADDR2LINE, "-C", "-f", "-i", (is_binary ? "-e" : "-M"), object, NULL };
+			char *argv_binutils[] = { BINUTILS_ADDR2LINE, "-C", "-f", "-e", (is_binary ? object : current_process->execMapping->pathname), NULL };
+			char **argv = NULL;
+	#if defined(HAVE_ELFUTILS)
+			if (backend->useBackend == USE_ELFUTILS) {
+				argv = argv_elfutils;			
+			}
+	#endif
+	#if defined(HAVE_BINUTILS)
+			if (backend->useBackend == USE_BINUTILS) {
+				argv = argv_binutils;
+			}
+	#endif
+
+			// Replaces the current process with addr2line backend
+			execvp(argv[0], argv);
+		}
+		else 
+		{
+			// In the parent process
+			close(current_process->parentWrite[READ_END]); // Close unused 'read end' of the parent_write pipe
+			close(current_process->childWrite[WRITE_END]); // Close unused 'write end' of the child_write pipe
+
+			// Open a FILE stream to read addr2line's backend output
+			current_process->outputStream = fdopen(current_process->childWrite[READ_END], "r");
+			if (current_process->outputStream == NULL) {
+				perror("fdopen failed");
+				exit(EXIT_FAILURE);
+			}
+		}
+	}
+	return backend;
 }
 
 /**
@@ -230,19 +276,34 @@ addr2line_process_t * addr2line_exec(char *object, int options)
  * @param column	Output pointer for the column number.
  * @param mapping	Output buffer for the mapping name.
  */
-void addr2line_translate(addr2line_process_t *backend, void *address, char **function, char **file, int *line, int *column, char **mapping)
+void addr2line_translate(addr2line_t *backend, void *address, char **function, char **file, int *line, int *column, char **mapping_name)
 {
 	char address_str[BUFSIZ];
 	char buf[BUFSIZ];
 
+	addr2line_process_t *translator = &backend->processList[0];
+	if (backend->numProcesses > 1)
+	{
+		// Find the mapping that contains the address
+		for (int i = 0; i < backend->numProcesses; ++i)
+		{
+			addr2line_process_t *current_process = &backend->processList[i];
+			if (address_in_mapping(current_process->execMapping, (unsigned long)address))
+			{
+				translator = current_process;
+				break;
+			}
+		}
+	}	
+
 	// Format the address pointer as a string and pass it to addr2line
 	sprintf(address_str, "%p\n", address); 
 	fprintf(stderr, "[DEBUG] addr2line_translate: address_str=%s\n", address_str);
-	write_with_retry(backend->parentWrite[WRITE_END], address_str, strlen(address_str));
+	write_with_retry(translator->parentWrite[WRITE_END], address_str, strlen(address_str));
 
 	// Read the function name from addr2line's output
 	*function = NULL;
-	if (fgets(buf, sizeof(buf), backend->outputStream) != NULL)
+	if (fgets(buf, sizeof(buf), translator->outputStream) != NULL)
 	{
 		if (buf[strlen(buf)-1] == '\n') {
 			buf[strlen(buf)-1] = '\0'; // Remove the newline character
@@ -256,7 +317,7 @@ void addr2line_translate(addr2line_process_t *backend, void *address, char **fun
 	// Read the filename, line number, and column number from addr2line's output
 	*file = NULL;
 	*line = *column = 0;
-	if (fgets(buf, sizeof(buf), backend->outputStream) != NULL)
+	if (fgets(buf, sizeof(buf), translator->outputStream) != NULL)
 	{
 #if defined(HAVE_ELFUTILS)
 		// Parsing the column number (currently only available with elfutils)
@@ -287,9 +348,13 @@ void addr2line_translate(addr2line_process_t *backend, void *address, char **fun
 	if (*function == NULL) *function = strdup((backend->setOptions & OPTION_KEEP_UNRESOLVED_ADDRESSES) ? address_str : UNKNOWN_ADDRESS);
 	if (*file == NULL) *file = strdup((backend->setOptions & OPTION_KEEP_UNRESOLVED_ADDRESSES) ? address_str : UNKNOWN_ADDRESS);
 
-	// Look for the mapping name in the /proc/self/maps file
-	maps_entry_t *found_mapping = find_address_in_exec_mappings(backend->mappingList, (unsigned long)address);
-	if (found_mapping  != NULL) {
-		*mapping = strdup(found_mapping->pathname);
+	// Get the mapping name
+	if (translator->execMapping != NULL) 
+	{
+		*mapping_name = strdup(translator->execMapping->pathname);
+	}
+	else {
+		// If no maps file was given, use the input object as the mapping name
+		*mapping_name = strdup( (backend->procMaps != NULL ? maps_main_exec(backend->procMaps) : backend->inputObject));
 	}
 }

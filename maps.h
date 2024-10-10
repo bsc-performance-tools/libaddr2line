@@ -20,14 +20,38 @@ typedef struct maps_entry {
  * Structure to hold the parsed /proc/self/maps file.
  */
 typedef struct maps_t {
-    maps_entry_t *list_all;       // List of all entries
+    maps_entry_t *all_entries;    // List of all entries
     int num_all_entries;          // Number of all entries
-    maps_entry_t *list_exec;      // List of executable entries
+    maps_entry_t *exec_entries;   // List of executable entries
     int num_exec_entries;         // Number of executable entries
     char *main_exec;              // Path to the main executable
 } maps_t;
 
-maps_t * parse_maps_file(char *maps_file);
-void free_maps(maps_t *mapping_list);
-maps_entry_t * find_address_in_mappings(maps_t *mapping_list, unsigned long address);
-maps_entry_t * find_address_in_exec_mappings(maps_t *mapping_list, unsigned long address);
+maps_t * maps_parse_file(char *maps_file);
+void maps_free(maps_t *mapping_list);
+maps_entry_t * maps_find_by_address(maps_entry_t *mapping_list, unsigned long address);
+
+// Macros to search for an address in the mappings
+#define search_in_all_mappings(maps, address) maps_find_by_address(maps->all_entries, address)
+#define search_in_exec_mappings(maps, address) maps_find_by_address(maps->exec_entries, address)
+#define address_in_mapping(entry, address) (address >= entry->start && address < entry->end)
+
+/*
+ * Macros to iterate over the `maps_t` structure.
+ *
+ * - `all_mappings` and `next_mapping`: For iterating over all entries.
+ * - `exec_mappings` and `next_exec_mapping`: For iterating over executable entries.
+ *
+ * Important: Do not mix them!
+ * Using the wrong macro pair can lead to skipped entries or crashes, as the lists use different pointers (`next_all` vs. `next_exec`).
+ */
+#define all_mappings(mapping_list) (mapping_list->all_entries)
+#define all_mappings_size(mapping_list) (mapping_list->num_all_entries)
+#define next_mapping(entry) (entry->next_all)
+
+#define exec_mappings(mapping_list) (mapping_list->exec_entries)
+#define exec_mappings_size(mapping_list) (mapping_list->num_exec_entries)
+#define next_exec_mapping(entry) (entry->next_exec)
+
+// Macro to get the path to the main executable
+#define maps_main_exec(mapping_list) (mapping_list->main_exec)  

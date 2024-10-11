@@ -112,16 +112,17 @@ static ssize_t write_with_retry(int fd, const void *buf, size_t count) {
 /** 
  * addr2line_exec
  * 
- * Runs one or more addr2line processes for the given object, which can be either a
- * binary or a dump of the /proc/self/maps file. This function sets up pipes for 
- * inter-process communication, forks a child process to execute addr2line, and 
- * connects the pipes to the child's stdin and stdout.
+ * Initializes one or more addr2line processes for the given object, which can be 
+ * either a binary or a dump of the /proc/self/maps file. This function parses
+ * the maps file if given, determines the number of addr2line processes to spawn,
+ * and initializes structures, leaving the actual fork deferred until the first 
+ * translation.
  * 
  * @param object Path either to the binary or to a dump of the /proc/self/maps.
  * @param options Configuration options for the addr2line process.
- * @return addr2line_t structure containing the addr2line backend.
+ * @return Pointer to the addr2line backend handler.
  */
-addr2line_t * addr2line_exec(char *object, int options)
+addr2line_t * addr2line_init(char *object, int options)
 {
 	addr2line_t *backend = NULL;
 	
@@ -131,16 +132,14 @@ addr2line_t * addr2line_exec(char *object, int options)
 	// Allocate memory for the addr2line backend
 	backend = malloc(sizeof(addr2line_t));
 	if (backend == NULL) {
-		fprintf(stderr, "ERROR: addr2line_exec: Out of memory\n");
+		fprintf(stderr, "ERROR: addr2line_init: Out of memory\n");
 		exit(EXIT_FAILURE);
 	}
 
-	// Store the input object
-	backend->inputObject = strdup(object);
-
-	// Check if the object is a binary file or a maps file
+	// Check if the object is a binary file or a maps file and store it
 	int is_binary = is_binary_file(object);
 	int is_mapping = !is_binary;
+	backend->inputObject = strdup(object);
 
 	// Set the configuration options
 	backend->setOptions = options;
@@ -156,8 +155,7 @@ addr2line_t * addr2line_exec(char *object, int options)
 
 	// Parse the /proc/self/maps file if given
 	backend->procMaps = NULL;
-	if (is_mapping)
-	{
+	if (is_mapping)	{
 		backend->procMaps = maps_parse_file(object);
 	}
 
@@ -167,18 +165,18 @@ addr2line_t * addr2line_exec(char *object, int options)
 		/*
 		 * binutils can not take a /proc/self/maps file as input, 
 		 * so we will instantiate individual addr2line processes for each 
-		 * executable mapping in the /proc/self/maps file.
+		 * executable mapping in the maps file.
 		 */
 		int num_exec_entries = exec_mappings_size(backend->procMaps);
 		backend->numProcesses = num_exec_entries;
 
 		backend->processList = malloc(sizeof(addr2line_process_t) * num_exec_entries);
 		if (backend->processList == NULL) {
-			fprintf(stderr, "ERROR: addr2line_exec: Out of memory\n");
+			fprintf(stderr, "ERROR: addr2line_init: Out of memory\n");
 			exit(EXIT_FAILURE);
 		}
 
-		// Associate each executable mapping with its corresponding addr2line process
+		// Associate one addr2line process to each executable mapping 
 		maps_entry_t *exec_entry = exec_mappings(backend->procMaps);
 		for (int i = 0; i < num_exec_entries; ++i) 
 		{
@@ -197,72 +195,81 @@ addr2line_t * addr2line_exec(char *object, int options)
 			fprintf(stderr, "ERROR: addr2line_exec: Out of memory\n");
 			exit(EXIT_FAILURE);
 		}
-		backend->processList[0].execMapping = NULL; // No mapping for a single addr2line process
+		backend->processList[0].execMapping = NULL; // No mapping associated for a single addr2line process
 		backend->numProcesses = 1;
 	}
 
 	// Defer the fork until the first translation
 	for (int i = 0; i < backend->numProcesses; ++i) 
 	{
-		/*	
-		backend->processList[i].outputStream = NULL;
-		backend->processList[i].parentWrite[0] = backend->processList[i].parentWrite[1] = -1;
-		backend->processList[i].childWrite[0] = backend->processList[i].childWrite[1] = -1;
-		*/
 		backend->processList[i].isForked = 0;
 	}
 
 	return backend;
 }
 
-// XXX Fix this comment
-// Spawn an addr2line process for each mapping (when using binutils with /proc/self/maps), or a single instance for other scenarios.
-
+/**
+ * invoke_translator
+ * 
+ * Invokes the addr2line backend to translate the given address. This function
+ * determines the addr2line process to use based on the mapping offset, and forks
+ * a child process to run addr2line. The forked process runs as a continuous 
+ * background process, unless OPTION_NON_PERSISTENT is set, in which case the
+ * process is spawned and ended for each translation. 
+ * 
+ * Depending on the backend used, multiple addr2line processes are spawned (one 
+ * for each mapping when using binutils with a maps file), or just a single instance 
+ * for other scenarios.
+ * 
+ * @param backend Pointer to the addr2line backend handler.
+ * @param address Address to translate.
+ * @param[out] adjusted_address_str Address string passed to the addr2line command after adjusting it to the mapping offset if needed.
+ */
 static addr2line_process_t * invoke_translator(addr2line_t *backend, void *address, char **adjusted_address_str)
 {
+	addr2line_process_t *translator = &backend->processList[0]; // Default to the first addr2line process
 	void *adjusted_address = address;
-#warning "Ojito que adjusted_address es void ** y se usa con *adjusted_address en esta rutina, pero ya no es un parametro de I/O" 
 	int is_binary = (backend->procMaps == NULL);
-	static int fork_count = 1;
 
-	addr2line_process_t *translator = &backend->processList[0];
+	// If multiple addr2line processes are used, find the one whose mapping contains the address
 	if (backend->numProcesses > 1)
 	{
-		// Find the mapping that contains the address
 		for (int i = 0; i < backend->numProcesses; ++i)
 		{
 			addr2line_process_t *current_process = &backend->processList[i];
 			if (address_in_mapping(current_process->execMapping, (unsigned long)address))
 			{
 				translator = current_process;
+				// Adjust the address to the mapping offset
 				adjusted_address = (void *)((unsigned long)address - translator->execMapping->start) + translator->execMapping->offset;
 				break;
 			}
 		}
 	}	
+
+	// Format the address string to be passed to the addr2line command
 	char adjusted_address_endl[BUFSIZ];
 	char adjusted_address_chomp[BUFSIZ];
 	sprintf(adjusted_address_endl, "%p\n", adjusted_address); // Append '\n' when parent writes to child through pipe to unblock it
 	sprintf(adjusted_address_chomp, "%p", adjusted_address); // Do not append '\n' when addr2line command receives the address directly
 
-	if (!translator->isForked)
+	// Fork the addr2line process if not already forked, or if non-persistent option is set
+	if ((!translator->isForked) || (backend->setOptions & OPTION_NON_PERSISTENT))
 	{
-		fprintf(stderr, "!!!!!!!! [DEBUG] FORK NEW ADDR2LINE %d\n", fork_count);
-		fork_count ++;
-
-		// Creating pipes for communication between parent and child processes
+		// Create pipes for communication between parent and child processes
 		if (pipe(translator->parentWrite) == -1 || pipe(translator->childWrite) == -1)
 		{
 			perror("Failed to create pipes");
 			exit(EXIT_FAILURE);
 		}
 
-		// Fork a child process to run addr2line as a continuous background process
 		if (fork() == 0)
 		{
 			// In the child process
-			close(translator->parentWrite[WRITE_END]); // Close unused 'write end' of the parent_write pipe
-			close(translator->childWrite[READ_END]);   // Close unused 'read end' of the child_write pipe
+
+			// Close unused ends of the pipes
+			close(translator->parentWrite[WRITE_END]);
+			close(translator->childWrite[READ_END]);
 
 			if ((dup2(translator->parentWrite[READ_END], STDIN_FILENO) == -1) || // Get stdin to read from from parent_write[READ_END] pipe
 				(dup2(translator->childWrite[WRITE_END], STDOUT_FILENO) == -1))  // Redirect stdout to write to child_write[WRITE_END] pipe
@@ -279,24 +286,20 @@ static addr2line_process_t * invoke_translator(addr2line_t *backend, void *addre
 			* Set up arguments for execution
 			* elfutils uses a single addr2line process to handle either the specified binary (-e binary) or /proc/self/maps (-M maps_file).
 			* binutils uses a single addr2line process for a specified binary (-e binary), or multiple processes for each executable mapping (-e mapping1, -e mapping2, etc.).
+			* If the non-persistent option is set, the address is passed directly to the addr2line command and the process will end after the translation.
+			* Otherwise, the process will stall in a read loop until the address is passed later through the pipe.
 			*/
-#if 0
-			char adjusted_address_str[BUFSIZ];
-			sprintf(adjusted_address_str, "%p", *adjusted_address); // Do not append '\n' to the address string here, as it corrupts the address read by the child process.
-#endif
 			char *argv_elfutils[] = { ELFUTILS_ADDR2LINE, "-C", "-f", "-i", (is_binary ? "-e" : "-M"), backend->inputObject, (backend->setOptions & OPTION_NON_PERSISTENT ? adjusted_address_chomp : NULL), NULL };
 			char *argv_binutils[] = { BINUTILS_ADDR2LINE, "-C", "-f", "-e", (is_binary ? backend->inputObject : translator->execMapping->pathname), (backend->setOptions & OPTION_NON_PERSISTENT ? adjusted_address_chomp : NULL), NULL };
 			char **argv = NULL;
 	#if defined(HAVE_ELFUTILS)
 			if (backend->useBackend == USE_ELFUTILS) {
 				argv = argv_elfutils;			
-				fprintf(stderr, "[DEBUG] argv => %s %s %s %s %s %s %s %s\n", argv[0], argv[1], argv[2], argv[3], argv[4], argv[5], argv[6], adjusted_address_str);
 			}
 	#endif
 	#if defined(HAVE_BINUTILS)
 			if (backend->useBackend == USE_BINUTILS) {
 				argv = argv_binutils;
-				fprintf(stderr, "[DEBUG] argv => %s %s %s %s %s %s %s\n", argv[0], argv[1], argv[2], argv[3], argv[4], argv[5], adjusted_address_str);
 			}
 	#endif
 			// Replaces the current process with addr2line backend
@@ -318,24 +321,28 @@ static addr2line_process_t * invoke_translator(addr2line_t *backend, void *addre
 				perror("fdopen failed");
 				exit(EXIT_FAILURE);
 			}
-
-			fprintf(stderr, "!!!!!!!! [DEBUG] FD's %d %d %d\n", fileno(translator->outputStream), translator->parentWrite[WRITE_END], translator->childWrite[READ_END]);
 		}
 	}
 
+	// If the addr2line process is persistent, pass now the address to translate to the background process
 	if (!(backend->setOptions & OPTION_NON_PERSISTENT))
 	{
-#if 0
-		char adjusted_address_str[BUFSIZ];
-		sprintf(adjusted_address_str, "%p\n", *adjusted_address); // Append '\n' to the address string here to unblock the child process
-#endif
 		write_with_retry(translator->parentWrite[WRITE_END], adjusted_address_endl, strlen(adjusted_address_endl));
 	}
 
+	// Return the adjusted address string that was passed to addr2line
 	*adjusted_address_str = strdup(adjusted_address_chomp);
 	return translator;
 }
 
+/**
+ * free_translator
+ * 
+ * Close the pipes associated with the given addr2line process, only if flagged as non-persistent!
+ * 
+ * @param backend Pointer to the addr2line backend handler.
+ * @param translator Pointer to the addr2line process handler.
+ */
 static void free_translator(addr2line_t *backend, addr2line_process_t *translator)
 {
 	if (backend->setOptions & OPTION_NON_PERSISTENT)
@@ -350,33 +357,23 @@ static void free_translator(addr2line_t *backend, addr2line_process_t *translato
 /**
  * addr2line_translate
  * 
- * Translate a memory address into the corresponding function, file, line, and column using addr2line.
+ * Translate a memory address into the corresponding function, file, line, column (elfutils only) and mapping (if maps file was given).
  * 
- * @param backend   The handler of the running addr2line process
- * @param address	The memory address to translate.
- * @param function 	Output buffer for the function name.
- * @param file 		Output buffer for the filename.
- * @param line		Output pointer for the line number.
- * @param column	Output pointer for the column number.
- * @param mapping	Output buffer for the mapping name.
+ * @param backend       The handler of the running addr2line process
+ * @param address       The memory address to translate.
+ * @param function[out] Output buffer for the function name.
+ * @param file[out]     Output buffer for the filename.
+ * @param line[out]	    Output pointer for the line number.
+ * @param column[out]   Output pointer for the column number.
+ * @param mapping[out]  Output buffer for the mapping name.
  */
 void addr2line_translate(addr2line_t *backend, void *address, char **function, char **file, int *line, int *column, char **mapping_name)
 {
 	char *adjusted_address_str = NULL;
 	char buf[BUFSIZ];
 
+	// Select the addr2line process to use and invoke it
 	addr2line_process_t *translator = invoke_translator(backend, address, &adjusted_address_str);
-
-#if 0
-	if (!(backend->setOptions & OPTION_NON_PERSISTENT))
-	{
-		fprintf(stderr, "[DEBUG] Writing to pipe: %p\n", adjusted_address);
-		// Format the address pointer as a string and pass it to addr2line
-		sprintf(adjusted_address_str, "%p\n", adjusted_address); // Append '\n' to the address string here to unblock the child process
-		write_with_retry(translator->parentWrite[WRITE_END], adjusted_address_str, strlen(adjusted_address_str));
-	}
-	else fprintf(stderr, "[DEBUG] Skipping writing to pipe\n");
-#endif
 
 	// Read the function name from addr2line's output
 	*function = NULL;
@@ -422,32 +419,46 @@ void addr2line_translate(addr2line_t *backend, void *address, char **function, c
 	}
 
 	// Make sure we return something for function and file when the translation fails
-#warning "Ojito adjusted_address_str no vale nada ahora"
 	if (*function == NULL) *function = strdup((backend->setOptions & OPTION_KEEP_UNRESOLVED_ADDRESSES) ? adjusted_address_str : UNKNOWN_ADDRESS);
 	if (*file == NULL) *file = strdup((backend->setOptions & OPTION_KEEP_UNRESOLVED_ADDRESSES) ? adjusted_address_str : UNKNOWN_ADDRESS);
 
 	// Get the mapping name
-	if (translator->execMapping != NULL) 
-	{
-		// If the addr2line process is associated with a specific mapping, use the mapping name
+	if (translator->execMapping != NULL) {
+		// If the addr2line process is associated with a specific mapping (binutils), use that mapping name
 		*mapping_name = strdup(translator->execMapping->pathname);
 	}
-	else
-	{
-		if (backend->procMaps != NULL)
-		{
-			// If the input is a maps file, find the mapping that contains the address
-			maps_entry_t *entry = search_in_exec_mappings(backend->procMaps, (unsigned long)address);
-			if (entry != NULL) *mapping_name = strdup(entry->pathname);
-			else *mapping_name = strdup(maps_main_exec(backend->procMaps));
-		}
-		else
-		{
-			// If no maps file was given, use the input object as the mapping name
-			*mapping_name = strdup(backend->inputObject);
-		}
+	else if (backend->procMaps != NULL) {
+		// If the input was a maps file (elfutils), find the mapping that contains the address
+		maps_entry_t *entry = search_in_exec_mappings(backend->procMaps, (unsigned long)address);
+		if (entry != NULL) *mapping_name = strdup(entry->pathname);
+		else *mapping_name = strdup(maps_main_exec(backend->procMaps));
+	}
+	else {
+		// If no maps file was given (binutils/elfutils), use the input binary as the mapping name
+		*mapping_name = strdup(backend->inputObject);
 	}
 
+	// Free resources
 	free(adjusted_address_str);
 	free_translator(backend, translator);
+}
+
+/**
+ * addr2line_close
+ * 
+ * Close the addr2line backend and free all resources.
+ * 
+ * @param backend Pointer to the addr2line backend handler.
+ */
+void addr2line_close(addr2line_t *backend)
+{
+	if (backend->procMaps != NULL) maps_free(backend->procMaps);
+	free(backend->inputObject);
+	for (int i = 0; i < backend->numProcesses; ++i)	{
+		// Clear the non-persistent flag to force closing all descriptors
+		backend->setOptions &= ~OPTION_NON_PERSISTENT;
+		free_translator(backend, &backend->processList[i]);
+	}
+	free(backend->processList);
+	free(backend);
 }

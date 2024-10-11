@@ -36,5 +36,6 @@ typedef struct addr2line
 
 
 // Function prototypes
-addr2line_t * addr2line_exec(char *object, int options);
+addr2line_t * addr2line_init(char *object, int options);
 void addr2line_translate(addr2line_t *backend, void *address, char **function, char **file, int *line, int *column, char **mapping_name);
+void addr2line_close(addr2line_t *backend);

@@ -30,6 +30,8 @@ enum {
 # error "No addr2line backend available"
 #endif
 
+static addr2line_t * addr2line_init(char *object, maps_t *maps, int options);
+
 /**
  * select_backend
  * 
@@ -122,7 +124,18 @@ static ssize_t write_with_retry(int fd, const void *buf, size_t count) {
  * @param options Configuration options for the addr2line process.
  * @return Pointer to the addr2line backend handler.
  */
-addr2line_t * addr2line_init(char *object, int options)
+
+addr2line_t * addr2line_init_file(char *object, int options)
+{
+	return addr2line_init(object, NULL, options);
+}
+
+addr2line_t * addr2line_init_maps(maps_t *parsed_maps, int options)
+{
+	return addr2line_init(maps_path(parsed_maps), parsed_maps, options);
+}
+
+static addr2line_t * addr2line_init(char *object, maps_t *parsed_maps, int options)
 {
 	addr2line_t *backend = NULL;
 	
@@ -136,11 +149,6 @@ addr2line_t * addr2line_init(char *object, int options)
 		exit(EXIT_FAILURE);
 	}
 
-	// Check if the object is a binary file or a maps file and store it
-	int is_binary = is_binary_file(object);
-	int is_mapping = !is_binary;
-	backend->inputObject = strdup(object);
-
 	// Set the configuration options
 	backend->setOptions = options;
 	char *env_non_persistent = getenv("LIBADDR2LINE_NON_PERSISTENT");
@@ -153,10 +161,26 @@ addr2line_t * addr2line_init(char *object, int options)
 	// Check the backend to use
 	backend->useBackend = select_backend();
 
-	// Parse the /proc/self/maps file if given
-	backend->procMaps = NULL;
-	if (is_mapping)	{
-		backend->procMaps = maps_parse_file(object);
+	int is_binary, is_mapping;
+	// Check if the input is a binary file, a maps file, or a parsed maps object
+	if (parsed_maps != NULL) {
+		// Save the given parsed maps object
+		is_binary = 0;
+		is_mapping = 1;
+		backend->inputObject = strdup(maps_path(parsed_maps));
+		backend->procMaps = parsed_maps;
+	}
+	else {
+		// Check if the object is a binary file or a maps file and store it
+		int is_binary = is_binary_file(object);
+		int is_mapping = !is_binary;
+		backend->inputObject = strdup(object);
+
+		// Parse the /proc/self/maps file if given
+		backend->procMaps = NULL;
+		if (is_mapping)	{
+			backend->procMaps = maps_parse_file(object, 0);
+		}
 	}
 
 	// Determine the number of addr2line processes to spawn

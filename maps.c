@@ -15,7 +15,7 @@
  * @param maps_file Path to the /proc/self/maps file
  * @param mapping_list Pointer to the maps_t structure to store the mappings
  */
-maps_t * maps_parse_file(char *maps_file) {
+maps_t * maps_parse_file(char *maps_file, int options) {
     int num_all_entries = 0, num_exec_entries = 0; 
     maps_entry_t *head_all = NULL, *tail_all = NULL;
     maps_entry_t *head_exec = NULL, *tail_exec = NULL;
@@ -24,6 +24,7 @@ maps_t * maps_parse_file(char *maps_file) {
     if (mapping_list == NULL) {
         return NULL;
     }
+    mapping_list->path = strdup(maps_file);
 
     // Open the maps file
     FILE *fd = fopen(maps_file, "r");
@@ -89,6 +90,17 @@ maps_t * maps_parse_file(char *maps_file) {
     mapping_list->num_exec_entries = num_exec_entries;
     // Get the path to the main executable from the first entry in the list of executable mappings
     mapping_list->main_exec = strdup((head_exec == NULL ? "./a.out" : head_exec->pathname));
+
+    // Read the symbol tables for all mappings if requested
+    maps_entry_t *entry = mapping_list->all_entries;
+    while (entry != NULL) {
+        entry->symtab = NULL;
+        if (options & OPTION_READ_SYMTAB) {
+            nm_dump_symtab(entry->pathname, &(entry->symtab));
+        }
+        entry = entry->next_all;
+    }
+
     return mapping_list;
 }
 
@@ -107,6 +119,7 @@ void maps_free(maps_t *mapping_list)
         while (entry != NULL)
         {
             maps_entry_t *next = entry->next_all;
+            if (entry->symtab != NULL) symtab_free(entry->symtab);
             free(entry);
             entry = next;
         }
@@ -124,7 +137,7 @@ void maps_free(maps_t *mapping_list)
  * @param address Address to search for
  * @return Pointer to the entry that contains the address, or NULL if not found
  */
-maps_entry_t * maps_find_by_address(maps_entry_t *mapping_list, unsigned long address) {
+maps_entry_t * maps_find_by_address(maps_entry_t *mapping_list, unsigned long address, int search_filter) {
     maps_entry_t *entry = mapping_list;
     while (entry != NULL)
     {
@@ -132,7 +145,8 @@ maps_entry_t * maps_find_by_address(maps_entry_t *mapping_list, unsigned long ad
         {
             return entry;
         }
-        entry = entry->next_all;
+        entry = (search_filter == SEARCH_EXEC) ? entry->next_exec : entry->next_all;
     }
     return NULL;
 }
+

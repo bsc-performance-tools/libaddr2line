@@ -12,5 +12,6 @@ typedef struct symtab {
     int num_entries;
 } symtab_t;
 
-int nm_dump_symtab(char *binary_path, symtab_t *symtab);
+int nm_dump_symtab(char *binary_path, symtab_t **symtab);
 char * nm_get_symbol_name(symtab_t *symtab, unsigned long addr);
+void symtab_free(symtab_t *symtab);

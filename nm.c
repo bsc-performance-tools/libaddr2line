@@ -11,13 +11,16 @@
 #define FILTER_DATA_OBJECTS     // Define this to exclude non-data objects from the symtab dump
 #define SKIP_ZERO_SIZED_SYMBOLS // Define this to exclude zero-sized objects from the symtab dump
 
-int nm_dump_symtab(char *binary_path, symtab_t *symtab)
+int nm_dump_symtab(char *binary_path, symtab_t **symtab)
 {
     Elf         *elf;
     Elf_Scn     *scn = NULL;
     GElf_Shdr   shdr;
     Elf_Data    *data;
     int         fd, i, count;
+
+    *symtab = malloc(sizeof(symtab_t));
+    if (*symtab == NULL) return 0;
 
     elf_version(EV_CURRENT);
 
@@ -85,8 +88,8 @@ int nm_dump_symtab(char *binary_path, symtab_t *symtab)
     elf_end(elf);
     close(fd);
 
-    symtab->entries = entries;
-    symtab->num_entries = ii;
+    (*symtab)->entries = entries;
+    (*symtab)->num_entries = ii;
     return ii;
 }
 
@@ -99,4 +102,10 @@ char * nm_get_symbol_name(symtab_t *symtab, unsigned long addr)
         }
     }
     return NULL;
+}
+
+void symtab_free(symtab_t *symtab)
+{
+    free(symtab->entries);
+    free(symtab);
 }

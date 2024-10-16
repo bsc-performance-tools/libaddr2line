@@ -28,7 +28,7 @@ typedef struct addr2line
 	int useBackend;                   // User can override the default backend through the environment variable LIBADDR2LINE_BACKEND
 	int setOptions;                   // Selected configuration options
 
-	maps_t *procMaps;                 // Parsed /proc/self/maps file (only used when the input is a /proc/self/maps file)
+	maps_t *procMaps;                 // Parsed /proc/self/maps file (only used when the input is a /proc/self/maps file or a parsed maps object)
 
 	addr2line_process_t *processList; // Array of addr2line processes (> 1 when binutils is the backend and the input is a /proc/self/maps file, 1 otherwise)
 	int numProcesses;
@@ -36,6 +36,7 @@ typedef struct addr2line
 
 
 // Function prototypes
-addr2line_t * addr2line_init(char *object, int options);
+addr2line_t * addr2line_init_file(char *object, int options);
+addr2line_t * addr2line_init_maps(maps_t *parsed_maps, int options);
 void addr2line_translate(addr2line_t *backend, void *address, char **function, char **file, int *line, int *column, char **mapping_name);
 void addr2line_close(addr2line_t *backend);

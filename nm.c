@@ -6,11 +6,17 @@
 #include <gelf.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <string.h>
 #include "nm.h"
+
+#warning "Makefile.am has a fixed path... change it to ELFUTILS_LIBSDIR or similar"
+
+#warning "Rename library to libsymtab... it collides with a system's libnm"
 
 #define FILTER_DATA_OBJECTS     // Define this to exclude non-data objects from the symtab dump
 #define SKIP_ZERO_SIZED_SYMBOLS // Define this to exclude zero-sized objects from the symtab dump
 
+#warning "Just return a symtab_t *"
 int nm_dump_symtab(char *binary_path, symtab_t **symtab)
 {
     Elf         *elf;
@@ -19,28 +25,37 @@ int nm_dump_symtab(char *binary_path, symtab_t **symtab)
     Elf_Data    *data;
     int         fd, i, count;
 
-    *symtab = malloc(sizeof(symtab_t));
-    if (*symtab == NULL) return 0;
+    (*symtab) = NULL;
 
     elf_version(EV_CURRENT);
 
     fd = open(binary_path, O_RDONLY);
+    if (fd < 0) return 0;
+
     elf = elf_begin(fd, ELF_C_READ, NULL);
+    if (elf == NULL) return 0;
 
     // Find the .symtab section
-    while ((scn = elf_nextscn(elf, scn)) != NULL) {
+    int found_symtab = 0;
+    while (((scn = elf_nextscn(elf, scn)) != NULL) && (!found_symtab)) {
         gelf_getshdr(scn, &shdr);
         if (shdr.sh_type == SHT_SYMTAB) {
             // Go print it
+            found_symtab = 1;
             break;
         }
     }
+    if (!found_symtab) return 0;
 
+    // Get the number of symbols in the section
     data = elf_getdata(scn, NULL);
     count = shdr.sh_size / shdr.sh_entsize;
-
-    int ii = 0; // Counter for the number of symbols that pass the exclusion filter
+    if (count <= 0) return 0;
     symtab_entry_t *entries = malloc(count * sizeof(symtab_entry_t));
+    if (entries == NULL) return 0;
+
+    // Iterate over the symbols in the section
+    int unfiltered = 0; // Counter for the number of symbols that pass the exclusion filter
     for (i = 0; i < count; ++i) {
         GElf_Sym sym;
         gelf_getsym(data, i, &sym);
@@ -73,24 +88,35 @@ int nm_dump_symtab(char *binary_path, symtab_t **symtab)
 #endif
         if (!filter)
         {
-            entries[ii].name = elf_strptr(elf, shdr.sh_link, sym.st_name);
-            entries[ii].start = sym.st_value;
-            entries[ii].size = sym.st_size;
-            entries[ii].end = sym.st_value + sym.st_size;
-            ii ++;
+            // Copy the symbol name and address range
+            entries[unfiltered].name = strdup(elf_strptr(elf, shdr.sh_link, sym.st_name));
+            entries[unfiltered].start = sym.st_value;
+            entries[unfiltered].size = sym.st_size;
+            entries[unfiltered].end = sym.st_value + sym.st_size;
+            unfiltered ++;
         }
     }
 
-    // Print the unfiltered symbol names and addresses
-    for (i = 0; i < ii; ++i) {
-        printf("%s [0x%lx-0x%lx]\n", entries[i].name, entries[i].start, entries[i].end + entries[i].size); 
-    } 
+    /* Print the unfiltered symbol names and addresses
+    for (i = 0; i < unfiltered; ++i) {
+        fprintf(stderr, "!!! %s %s [0x%lx-0x%lx]\n", binary_path, entries[i].name, entries[i].start, entries[i].end + entries[i].size); 
+    } */
+
     elf_end(elf);
     close(fd);
 
-    (*symtab)->entries = entries;
-    (*symtab)->num_entries = ii;
-    return ii;
+    // Return the symtab_t structure and the symbol count
+    (*symtab) = malloc(sizeof(symtab_t));
+    if (*symtab != NULL) {
+        (*symtab)->entries = entries;
+        (*symtab)->num_entries = unfiltered;
+        return unfiltered;
+    }
+    else {
+#warning "Should free entries[i].name here"
+        free(entries);
+        return 0;
+    }
 }
 
 char * nm_get_symbol_name(symtab_t *symtab, unsigned long addr)
@@ -106,6 +132,11 @@ char * nm_get_symbol_name(symtab_t *symtab, unsigned long addr)
 
 void symtab_free(symtab_t *symtab)
 {
+    for (int i = 0; i < symtab->num_entries; ++i) {
+        free(symtab->entries[i].name);
+    }
     free(symtab->entries);
     free(symtab);
 }
+
+#warning "Implement some iterator macros as in maps"

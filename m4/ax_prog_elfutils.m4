@@ -24,6 +24,12 @@ AC_DEFUN([AX_PROG_ELFUTILS],
     CFLAGS="-I${elfutils_home}/include"
     AC_CHECK_HEADERS([libelf.h], [], [AC_MSG_ERROR([Required header libelf.h not found in ${elfutils_home}/include. Ensure it's installed.])])
     AC_CHECK_HEADERS([gelf.h], [], [AC_MSG_ERROR([Required header gelf.h not found in ${elfutils_home}/include. Ensure it's installed.])])
+    AC_SUBST(ELFUTILS_CFLAGS, ${CFLAGS})
+
+    # Test for libraries
+    LDFLAGS="-L${elfutils_home}/lib -lelf"
+    AC_SEARCH_LIBS(elf_begin, elf, [], [AC_MSG_ERROR([Required library libelf not found in ${elfutils_home/lib}. Ensure it's installed.])])
+    AC_SUBST(ELFUTILS_LDFLAGS, ${LDFLAGS})    
   else
     AC_MSG_RESULT([not available])
   fi

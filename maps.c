@@ -96,7 +96,7 @@ maps_t * maps_parse_file(char *maps_file, int options) {
     while (entry != NULL) {
         entry->symtab = NULL;
         if (options & OPTION_READ_SYMTAB) {
-            nm_dump_symtab(entry->pathname, &(entry->symtab));
+            entry->symtab = symtab_list_objects(entry->pathname);
         }
         entry = entry->next_all;
     }
@@ -119,7 +119,7 @@ void maps_free(maps_t *mapping_list)
         while (entry != NULL)
         {
             maps_entry_t *next = entry->next_all;
-            if (entry->symtab != NULL) symtab_free(entry->symtab);
+            symtab_free(entry->symtab);
             free(entry);
             entry = next;
         }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "nm.h"
+#include "symtab.h"
 
 // Available configuration options
 #define OPTION_READ_SYMTAB             (1 << 0) // Read the symbol table for each mapping 
@@ -69,4 +69,4 @@ enum {
 #define maps_path(mapping_list) (mapping_list->path)
 
 // Macro to get the path to the main executable
-#define maps_main_exec(mapping_list) (mapping_list->main_exec)  
+#define maps_main_exec(mapping_list) (mapping_list->main_exec)

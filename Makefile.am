@@ -1,14 +1,15 @@
 ACLOCAL_AMFLAGS = -I m4
 
-include_HEADERS = maps.h addr2line.h nm.h 
+include_HEADERS = maps.h addr2line.h symtab.h 
 
-lib_LTLIBRARIES = libnm.la libmaps.la libaddr2line.la 
+lib_LTLIBRARIES = libsymtab.la libmaps.la libaddr2line.la 
 
-libnm_la_SOURCES = nm.c
-libnm_la_LDFLAGS = -L/home/gllort/Apps/elfutils/0.191/lib -lelf
+libsymtab_la_SOURCES = symtab.c
+libsymtab_la_CFLAGS = @ELFUTILS_CFLAGS@
+libsymtab_la_LDFLAGS = @ELFUTILS_LDFLAGS@
 
 libmaps_la_SOURCES = maps.c
-libmaps_la_LIBADD = libnm.la
+libmaps_la_LIBADD = libsymtab.la
 
 libaddr2line_la_SOURCES = addr2line.c
 libaddr2line_la_LIBADD = libmaps.la

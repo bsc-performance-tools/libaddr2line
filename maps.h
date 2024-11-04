@@ -9,6 +9,7 @@
  * Structure to hold a single entry from the /proc/self/maps file.
  */
 typedef struct maps_entry {
+    int index;                    // Index of the entry in the mappings list
     unsigned long start;
     unsigned long end;
     char perms[5];

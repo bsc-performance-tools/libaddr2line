@@ -36,6 +36,8 @@ maps_t * maps_parse_file(char *maps_file, int options) {
             maps_entry_t *entry = (maps_entry_t *)malloc(sizeof(maps_entry_t));
             if (entry != NULL)
             {
+                entry->index = num_all_entries;
+
                 // Parse the line and store the values in the entry structure
                 int ret = sscanf(line, "%lx-%lx %4s %lx %x:%x %d %4095[^\n]", &entry->start, &entry->end, entry->perms, &entry->offset, &entry->dev_major, &entry->dev_minor, &entry->inode, entry->pathname);
                 if (ret >= 7)

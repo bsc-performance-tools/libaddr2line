@@ -280,11 +280,11 @@ static void * adjust_address(addr2line_t *backend, void *address, addr2line_proc
  * @param address Address to translate.
  * @param[out] adjusted_address_str Address string passed to the addr2line command after adjusting it to the mapping offset if needed.
  */
-static addr2line_process_t * invoke_translator(addr2line_t *backend, void *address, char **adjusted_address_str)
+static addr2line_process_t * invoke_translator(addr2line_t *backend, void *address, void **adjusted_address_ptr, char **adjusted_address_str)
 {
 	addr2line_process_t *translator = NULL;
 	int is_binary = (backend->procMaps == NULL);
-	void *adjusted_address = adjusted_address = adjust_address(backend, address, &translator);
+	void *adjusted_address = adjust_address(backend, address, &translator);
 
 	// Format the address string to be passed to the addr2line command
 	char adjusted_address_endl[BUFSIZ];
@@ -370,6 +370,7 @@ static addr2line_process_t * invoke_translator(addr2line_t *backend, void *addre
 	}
 
 	// Return the adjusted address string that was passed to addr2line
+	*adjusted_address_ptr = adjusted_address;
 	*adjusted_address_str = strdup(adjusted_address_chomp);
 	return translator;
 }
@@ -398,24 +399,23 @@ static void free_translator(addr2line_t *backend, addr2line_process_t *translato
  * 
  * Translate a memory address into the corresponding function, file, line, column (elfutils only) and mapping (if maps file was given).
  * 
- * @param backend       The handler of the running addr2line process
- * @param address       The memory address to translate.
- * @param function[out] Output buffer for the function name.
- * @param file[out]     Output buffer for the filename.
- * @param line[out]	    Output pointer for the line number.
- * @param column[out]   Output pointer for the column number.
- * @param mapping[out]  Output buffer for the mapping name.
+ * @param backend  The handler of the running addr2line process
+ * @param address  The memory address to translate.
+ * @param code_loc The structure to store the translation results.
  */
-void addr2line_translate(addr2line_t *backend, void *address, char **function, char **file, int *line, int *column, char **mapping_name)
+
+void addr2line_translate(addr2line_t *backend, void *address, code_loc_t *code_loc)
 {
-	char *adjusted_address_str = NULL;
 	char buf[BUFSIZ];
+	void *adjusted_address_ptr = NULL;
+	char *adjusted_address_str = NULL;
 
 	// Select the addr2line process to use and invoke it
-	addr2line_process_t *translator = invoke_translator(backend, address, &adjusted_address_str);
+	addr2line_process_t *translator = invoke_translator(backend, address, &adjusted_address_ptr, &adjusted_address_str);
+	code_loc->adjusted_address = adjusted_address_ptr;
 
 	// Read the function name from addr2line's output
-	*function = NULL;
+	code_loc->function = NULL;
 	if (fgets(buf, sizeof(buf), translator->outputStream) != NULL)
 	{
 		if (buf[strlen(buf)-1] == '\n') {
@@ -423,13 +423,13 @@ void addr2line_translate(addr2line_t *backend, void *address, char **function, c
 		} 
 		// Copying the function name only if has been translated
 		if (strcmp(buf, UNKNOWN_ADDRESS) != 0) {
-			*function = strdup(buf);
+			code_loc->function = strdup(buf);
 		}
 	}
 
 	// Read the filename, line number, and column number from addr2line's output
-	*file = NULL;
-	*line = *column = 0;
+	code_loc->file = NULL;
+	code_loc->line = code_loc->column = 0;
 	if (fgets(buf, sizeof(buf), translator->outputStream) != NULL)
 	{
 #if defined(HAVE_ELFUTILS)
@@ -439,7 +439,7 @@ void addr2line_translate(addr2line_t *backend, void *address, char **function, c
 			char *last_colon = strrchr(buf, ':'); 
 			if (last_colon != NULL)
 			{
-				*column = atoi(last_colon + 1);
+				code_loc->column = atoi(last_colon + 1);
 				*last_colon = '\0'; 
 			}
 		}
@@ -448,33 +448,33 @@ void addr2line_translate(addr2line_t *backend, void *address, char **function, c
 		char *first_colon = strrchr(buf, ':');
 		if (first_colon != NULL)
 		{
-			*line = atoi(first_colon + 1);
+			code_loc->line = atoi(first_colon + 1);
 			*first_colon = '\0'; 
 		}
 		// Copying the filename only if has been translated
 		if (strcmp(buf, UNKNOWN_ADDRESS) != 0) {
-			*file = strdup(buf);
+			code_loc->file = strdup(buf);
 		}
 	}
 
 	// Make sure we return something for function and file when the translation fails
-	if (*function == NULL) *function = strdup((backend->setOptions & OPTION_KEEP_UNRESOLVED_ADDRESSES) ? adjusted_address_str : UNKNOWN_ADDRESS);
-	if (*file == NULL) *file = strdup((backend->setOptions & OPTION_KEEP_UNRESOLVED_ADDRESSES) ? adjusted_address_str : UNKNOWN_ADDRESS);
+	if (code_loc->function == NULL) code_loc->function = strdup((backend->setOptions & OPTION_KEEP_UNRESOLVED_ADDRESSES) ? adjusted_address_str : UNKNOWN_ADDRESS);
+	if (code_loc->file == NULL) code_loc->file = strdup((backend->setOptions & OPTION_KEEP_UNRESOLVED_ADDRESSES) ? adjusted_address_str : UNKNOWN_ADDRESS);
 
 	// Get the mapping name
 	if (translator->execMapping != NULL) {
 		// If the addr2line process is associated with a specific mapping (binutils), use that mapping name
-		*mapping_name = strdup(translator->execMapping->pathname);
+		code_loc->mapping_name = strdup(translator->execMapping->pathname);
 	}
 	else if (backend->procMaps != NULL) {
 		// If the input was a maps file (elfutils), find the mapping that contains the address
 		maps_entry_t *entry = search_in_exec_mappings(backend->procMaps, (unsigned long)address);
-		if (entry != NULL) *mapping_name = strdup(entry->pathname);
-		else *mapping_name = strdup(maps_main_exec(backend->procMaps));
+		if (entry != NULL) code_loc->mapping_name = strdup(entry->pathname);
+		else code_loc->mapping_name = strdup(maps_main_exec(backend->procMaps));
 	}
 	else {
 		// If no maps file was given (binutils/elfutils), use the input binary as the mapping name
-		*mapping_name = strdup(backend->inputObject);
+		code_loc->mapping_name = strdup(backend->inputObject);
 	}
 
 	// Free resources

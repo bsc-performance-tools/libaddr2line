@@ -13,6 +13,16 @@ enum {
 	WRITE_END = 1
 };
 
+typedef struct code_loc
+{
+	void *adjusted_address;
+	char *mapping_name;
+	char *file;
+	int line;
+	int column;
+	char *function;
+} code_loc_t;
+
 typedef struct addr2line_process
 {
 	int parentWrite[2];        // Pipes for communication between parent and child processes
@@ -34,9 +44,8 @@ typedef struct addr2line
 	int numProcesses;
 } addr2line_t;
 
-
 // Function prototypes
 addr2line_t * addr2line_init_file(char *object, int options);
 addr2line_t * addr2line_init_maps(maps_t *parsed_maps, int options);
-void addr2line_translate(addr2line_t *backend, void *address, char **function, char **file, int *line, int *column, char **mapping_name);
+void addr2line_translate(addr2line_t *backend, void *address, code_loc_t *code_loc);
 void addr2line_close(addr2line_t *backend);

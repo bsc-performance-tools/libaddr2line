@@ -233,6 +233,37 @@ static addr2line_t * addr2line_init(char *object, maps_t *parsed_maps, int optio
 }
 
 /**
+ * adjust_address
+ * 
+ * Iterate over the addr2line processes to find the one whose mapping contains the address.
+ * Then adjust the address to the mapping offset, and return the adjusted address, as well
+ * as the addr2line process to use for the translation.
+ */
+static void * adjust_address(addr2line_t *backend, void *address, addr2line_process_t **translator)
+{
+	void *adjusted_address = address;
+	
+	// If multiple addr2line processes are used, find the one whose mapping contains the address
+	if (backend->numProcesses > 1) // FIXME: This is a bug -- Could happen that a binutils backend only has 1 executable mapping!!!
+	{
+		for (int i = 0; i < backend->numProcesses; ++i)
+		{
+			addr2line_process_t *current_process = &backend->processList[i];
+			if (address_in_mapping(current_process->execMapping, (unsigned long)address))
+			{
+				// Adjust the address to the mapping offset
+				*translator = current_process;
+				adjusted_address = (void *)((unsigned long)address - current_process->execMapping->start) + current_process->execMapping->offset;
+				return adjusted_address;
+			}
+		}
+	}
+	// Default to the first addr2line process and leave the address unchanged
+	*translator = &backend->processList[0]; 
+	return address;
+}
+
+/**
  * invoke_translator
  * 
  * Invokes the addr2line backend to translate the given address. This function
@@ -251,25 +282,9 @@ static addr2line_t * addr2line_init(char *object, maps_t *parsed_maps, int optio
  */
 static addr2line_process_t * invoke_translator(addr2line_t *backend, void *address, char **adjusted_address_str)
 {
-	addr2line_process_t *translator = &backend->processList[0]; // Default to the first addr2line process
-	void *adjusted_address = address;
+	addr2line_process_t *translator = NULL;
 	int is_binary = (backend->procMaps == NULL);
-
-	// If multiple addr2line processes are used, find the one whose mapping contains the address
-	if (backend->numProcesses > 1)
-	{
-		for (int i = 0; i < backend->numProcesses; ++i)
-		{
-			addr2line_process_t *current_process = &backend->processList[i];
-			if (address_in_mapping(current_process->execMapping, (unsigned long)address))
-			{
-				translator = current_process;
-				// Adjust the address to the mapping offset
-				adjusted_address = (void *)((unsigned long)address - translator->execMapping->start) + translator->execMapping->offset;
-				break;
-			}
-		}
-	}	
+	void *adjusted_address = adjusted_address = adjust_address(backend, address, &translator);
 
 	// Format the address string to be passed to the addr2line command
 	char adjusted_address_endl[BUFSIZ];

@@ -35,7 +35,7 @@ AX_PROG_ELFUTILS
 AC_CHECK_HEADERS([ctype.h stdio.h stdlib.h string.h sys/types.h unistd.h])
 
 # Define directories that contain Makefile.am
-AC_CONFIG_FILES([Makefile])
+AC_CONFIG_FILES([Makefile src/Makefile])
 
 # Complete configuration process
 AC_OUTPUT

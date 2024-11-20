@@ -44,6 +44,9 @@ enum {
     SEARCH_EXEC 
 };
 
+// Compute the address relative to the base address of the given mapping 
+#define absolute_to_relative(mapping, address) (mapping != NULL ? address - mapping->start + mapping->offset : address)
+
 // Macros to search for an address in the mappings
 #define search_in_all_mappings(maps, address) maps_find_by_address(maps->all_entries, address, SEARCH_ALL)
 #define search_in_exec_mappings(maps, address) maps_find_by_address(maps->exec_entries, address, SEARCH_EXEC)

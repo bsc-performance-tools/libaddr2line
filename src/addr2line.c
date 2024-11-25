@@ -237,23 +237,74 @@ static addr2line_t * addr2line_init(char *object, maps_t *parsed_maps, int optio
  * 
  * Iterate over the addr2line processes to find the one whose mapping contains the address.
  * Then adjust the address to the mapping offset, and return the adjusted address, as well
- * as the addr2line process to use for the translation.
+ * as the addr2line process to use for the translation. The manual offsetting is only necessary
+ * for shared libraries under binutils (see comments below for details).
+ * 
+ * @param backend Pointer to the addr2line backend handler.
+ * @param address Address to adjust (if required).
+ * @param translator Pointer to the addr2line process handler.
  */
 static void * adjust_address(addr2line_t *backend, void *address, addr2line_process_t **translator)
 {
 	void *adjusted_address = address;
 	
-	// If multiple addr2line processes are used, find the one whose mapping contains the address
-	if (backend->numProcesses > 1) // FIXME: This is a bug -- Could happen that a binutils backend only has 1 executable mapping!!!
+	// Only binutils require manual adjustment of the address to the mapping offset.
+	if (backend->useBackend == USE_BINUTILS)
 	{
+		// If multiple addr2line processes are used, find the one whose mapping contains the address
 		for (int i = 0; i < backend->numProcesses; ++i)
 		{
 			addr2line_process_t *current_process = &backend->processList[i];
-			if (address_in_mapping(current_process->execMapping, (unsigned long)address))
+			if ((address_in_mapping(current_process->execMapping, (unsigned long)address)) && (!mapping_is_main_exec(current_process->execMapping)))
 			{
-				// Adjust the address to the mapping offset
+				/* TL;DR: Adjust the address to the mapping offset only for shared libraries (and not for the main executable).
+				 *
+				 * XXX: In our experiments, we have observed that for a given executable or shared library, 
+				 * there are multiple mappings in the maps file, with only one being executable [--x-], 
+				 * which is not the first entry in the list, e.g.:
+  			     *
+				 * 00400000-00403000 r--p 00000000 00:2f 391035422   my_main
+				 * 00403000-0047a000 r-xp 00003000 00:2f 391035422   my_main
+				 * 0047a000-0049e000 r--p 0007a000 00:2f 391035422   my_main
+				 * ...
+				 * 7f9c93cf7000-7f9c93d01000 r--p 00000000 00:35 391035434   libshared.so
+				 * 7f9c93d01000-7f9c93d78000 r-xp 0000a000 00:35 391035434   libshared.so
+				 * 7f9c93d78000-7f9c93d9c000 r--p 00081000 00:35 391035434   libshared.so
+				 * 
+				 * The addresses that we are capturing belong to the executable mappings [--x-], for instance, 
+				 * 0x403e46, which belongs to the executable mapping of my_main; and 0x7f9c93d01e32, which
+				 * belongs to the executable mapping of libshared.so. For the latter, we adjust the address
+				 * by substracting the base address of the mapping (7f9c93d01000) and adding the offset (0000a000).
+				 * The resulting adjusted address (0xae32) can be successfully translated:
+				 * 
+				 * > binutils-addr2line -e libshared.so 0xae32
+				 * bye_world
+				 * /home/user/libshared.c:13
+				 * 
+				 * However, if the same offset operation is applied to an address from the main executable, 
+				 * the translation fails. In the example, the adjusted address would be computed as:
+				 * 0x403e46 (original) - 00403000 (start) + 00003000 (offset) = 0x3e46
+				 * 
+				 * Then, the translation fails:
+				 * > binutils-addr2line -e my_main 0x3e46
+				 * ??
+				 * ??:0
+				 * 
+				 * For the addresses from the main executable, we need to leave them unchanged for the translation to work:
+				 * > binutils-addr2line -e my_main 0x403e46 
+				 * hello_world
+				 * /home/user/my_main.c:42
+				 * 
+			     * Note that the first entry in the maps file for the main executable is mapped at offset zero:
+				 *                               
+				 * 00400000-00403000 r--p 00000000 00:2f 391035422   my_main <= The first mapping for the main executable is offset zero
+				 * 00403000-0047a000 r-xp 00003000 00:2f 391035422   my_main <= Address 0x403e46 belongs to this mapping
+				 *  
+				 * It's not clear if some extra offsetting would be necessary if the first entry offset was above zero. 
+				 * We leave this long explanation as a note for future reference, in case some translations fail.
+				 */
 				*translator = current_process;
-				adjusted_address = (void *)((unsigned long)address - current_process->execMapping->start) + current_process->execMapping->offset;
+				adjusted_address = absolute_to_relative(current_process->execMapping, address);
 				return adjusted_address;
 			}
 		}

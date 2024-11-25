@@ -21,6 +21,7 @@ typedef struct maps_entry {
     struct maps_entry *next_all;  // Next in the list of all entries
     struct maps_entry *next_exec; // Next in the list of executable entries
     symtab_t *symtab;             // Symbol table for the mapping
+    int is_main_exec;             // Flag to indicate the main executable
 } maps_entry_t;
 
 /**
@@ -46,6 +47,9 @@ enum {
 
 // Compute the address relative to the base address of the given mapping 
 #define absolute_to_relative(mapping, address) (mapping != NULL ? address - mapping->start + mapping->offset : address)
+
+// Check if the mapping is the main executable
+#define mapping_is_main_exec(mapping) (mapping->is_main_exec)
 
 // Macros to search for an address in the mappings
 #define search_in_all_mappings(maps, address) maps_find_by_address(maps->all_entries, address, SEARCH_ALL)

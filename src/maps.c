@@ -25,6 +25,7 @@ maps_t * maps_parse_file(char *maps_file, int options) {
         return NULL;
     }
     mapping_list->path = strdup(maps_file);
+    mapping_list->main_exec = NULL; 
 
     // Open the maps file
     FILE *fd = fopen(maps_file, "r");
@@ -35,13 +36,21 @@ maps_t * maps_parse_file(char *maps_file, int options) {
         {
             maps_entry_t *entry = (maps_entry_t *)malloc(sizeof(maps_entry_t));
             if (entry != NULL)
-            {
+            {             
                 entry->index = num_all_entries;
+                entry->is_main_exec = 0;
 
                 // Parse the line and store the values in the entry structure
                 int ret = sscanf(line, "%lx-%lx %4s %lx %x:%x %d %4095[^\n]", &entry->start, &entry->end, entry->perms, &entry->offset, &entry->dev_major, &entry->dev_minor, &entry->inode, entry->pathname);
                 if (ret >= 7)
                 {
+                    // Get the main executable from the first mapping entry
+                    if (!mapping_list->main_exec) 
+                    {
+                        mapping_list->main_exec = strdup(entry->pathname);
+                        entry->is_main_exec = 1;
+                    }
+                    else entry->is_main_exec = (strcmp(entry->pathname, mapping_list->main_exec) == 0);
                     entry->next_all = NULL;
                     entry->next_exec = NULL;
                     // Append the entry to the list of all mappings
@@ -90,8 +99,6 @@ maps_t * maps_parse_file(char *maps_file, int options) {
     mapping_list->num_all_entries = num_all_entries;
     mapping_list->exec_entries = head_exec;
     mapping_list->num_exec_entries = num_exec_entries;
-    // Get the path to the main executable from the first entry in the list of executable mappings
-    mapping_list->main_exec = strdup((head_exec == NULL ? "./a.out" : head_exec->pathname));
 
     // Read the symbol tables for all mappings if requested
     maps_entry_t *entry = mapping_list->all_entries;

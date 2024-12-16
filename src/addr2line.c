@@ -258,11 +258,13 @@ static void * adjust_address(addr2line_t *backend, void *address, addr2line_proc
 			if ((address_in_mapping(current_process->execMapping, (unsigned long)address)) && (!mapping_is_main_exec(current_process->execMapping)))
 			{
 				/* TL;DR: Adjust the address to the mapping offset only for shared libraries (and not for the main executable).
+				 *        This applies both to non-PIE and PIE (compiled/linked with -fPIE/-pie) executables.
+				 *        TODO: Check with PIE executables with ASLR (address randomization) disabled.
 				 *
 				 * XXX: In our experiments, we have observed that for a given executable or shared library, 
 				 * there are multiple mappings in the maps file, with only one being executable [--x-], 
 				 * which is not the first entry in the list, e.g.:
-  			     *
+				 *
 				 * 00400000-00403000 r--p 00000000 00:2f 391035422   my_main
 				 * 00403000-0047a000 r-xp 00003000 00:2f 391035422   my_main
 				 * 0047a000-0049e000 r--p 0007a000 00:2f 391035422   my_main
@@ -295,7 +297,7 @@ static void * adjust_address(addr2line_t *backend, void *address, addr2line_proc
 				 * hello_world
 				 * /home/user/my_main.c:42
 				 * 
-			     * Note that the first entry in the maps file for the main executable is mapped at offset zero:
+				 * Note that the first entry in the maps file for the main executable is mapped at offset zero:
 				 *                               
 				 * 00400000-00403000 r--p 00000000 00:2f 391035422   my_main <= The first mapping for the main executable is offset zero
 				 * 00403000-0047a000 r-xp 00003000 00:2f 391035422   my_main <= Address 0x403e46 belongs to this mapping

@@ -2,8 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include "maps.h"
+#include "magic.h"
 
 #define SKIP_SPECIAL_MAPPINGS // Define this to exclude special entries from the list of executable mappings (e.g., stack, heap, vdso, vvar, vsyscall, etc.) 
+
 
 /**
  * maps_parse_file
@@ -31,6 +33,16 @@ maps_t * maps_parse_file(char *maps_file, int options) {
     FILE *fd = fopen(maps_file, "r");
     if (fd != NULL)
     {
+        // Initialize libmagic
+        int magic_exists = 0;
+        magic_t magic = magic_open(MAGIC_NONE);
+        if (magic != NULL) {
+            // Load the magic database
+            if (magic_load(magic, NULL) == 0) {
+                magic_exists = 1;
+            }
+        }
+
         char line[BUFSIZ];
         while (fgets(line, sizeof(line), fd) != NULL)
         {
@@ -44,13 +56,22 @@ maps_t * maps_parse_file(char *maps_file, int options) {
                 int ret = sscanf(line, "%lx-%lx %4s %lx %x:%x %d %4095[^\n]", &entry->start, &entry->end, entry->perms, &entry->offset, &entry->dev_major, &entry->dev_minor, &entry->inode, entry->pathname);
                 if (ret >= 7)
                 {
-                    // Get the main executable from the first mapping entry
-                    if (!mapping_list->main_exec) 
+                    // Check if the mapping is the main executable
+                    if ((!mapping_list->main_exec) && (magic_exists)) 
                     {
-                        mapping_list->main_exec = strdup(entry->pathname);
-                        entry->is_main_exec = 1;
+                        // Get the file type from libmagic if available
+                        const char *file_type = magic_file(magic, entry->pathname);
+                        if (file_type != NULL) {
+                            if (strstr(file_type, "executable")) {
+                                mapping_list->main_exec = strdup(entry->pathname);
+                                entry->is_main_exec = 1;
+                            }
+                        }
                     }
-                    else entry->is_main_exec = (strcmp(entry->pathname, mapping_list->main_exec) == 0);
+                    else if ((mapping_list->main_exec) && (strcmp(entry->pathname, mapping_list->main_exec) == 0)) {
+                        entry->is_main_exec = 1;
+                    }                  
+
                     entry->next_all = NULL;
                     entry->next_exec = NULL;
                     // Append the entry to the list of all mappings
@@ -92,13 +113,35 @@ maps_t * maps_parse_file(char *maps_file, int options) {
                 }
             }
         }
+
+      	// Clean up
+    	if (magic_exists) magic_close(magic);
         fclose(fd);
     }
+
     // Store the lists in the maps_t structure
     mapping_list->all_entries = head_all;
     mapping_list->num_all_entries = num_all_entries;
     mapping_list->exec_entries = head_exec;
     mapping_list->num_exec_entries = num_exec_entries;
+
+    // If we failed to identify the main executable through libmagic, assume it's the first executable mapping entry (usually, but not always!)
+    // TODO: Improve this heuristic, filtering out shared objects with ".so" extension, etc.
+    if (!mapping_list->main_exec) {
+        maps_entry_t *first_exec_entry = mapping_list->exec_entries;
+        if (first_exec_entry != NULL) 
+        {
+            mapping_list->main_exec = strdup(first_exec_entry->pathname);
+            maps_entry_t *entry = mapping_list->all_entries;
+            while (entry != NULL)
+            {
+                if (strcmp(entry->pathname, mapping_list->main_exec) == 0) {
+                    entry->is_main_exec = 1;
+                }
+                entry = entry->next_all;
+            }
+        }
+    }
 
     // Read the symbol tables for all mappings if requested
     maps_entry_t *entry = mapping_list->all_entries;

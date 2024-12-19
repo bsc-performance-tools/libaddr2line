@@ -30,6 +30,7 @@ AX_PROG_ELFUTILS
 
 # Optionally check for libraries or dependencies 
 # AC_CHECK_LIB([pthread], [pthread_create])
+AC_CHECK_LIB([magic], [magic_open])
 
 # Optionally check for header files
 AC_CHECK_HEADERS([ctype.h stdio.h stdlib.h string.h sys/types.h unistd.h])

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "config.h"
 #include "maps.h"
 #include "magic.h"
 
@@ -15,9 +16,10 @@
  * one for mappings with execution permissions.
  * 
  * @param maps_file Path to the /proc/self/maps file
+ * @param main_binary Absolute path to the main binary (optional)
  * @param mapping_list Pointer to the maps_t structure to store the mappings
  */
-maps_t * maps_parse_file(char *maps_file, int options) {
+maps_t * maps_parse_file(char *maps_file, char *main_binary, int options) {
     int num_all_entries = 0, num_exec_entries = 0; 
     maps_entry_t *head_all = NULL, *tail_all = NULL;
     maps_entry_t *head_exec = NULL, *tail_exec = NULL;
@@ -27,8 +29,8 @@ maps_t * maps_parse_file(char *maps_file, int options) {
         return NULL;
     }
     mapping_list->path = strdup(maps_file);
-    mapping_list->main_exec = NULL; 
-
+    mapping_list->main_binary = (main_binary != NULL ? strdup(main_binary) : NULL); 
+    
     // Open the maps file
     FILE *fd = fopen(maps_file, "r");
     if (fd != NULL)
@@ -50,27 +52,35 @@ maps_t * maps_parse_file(char *maps_file, int options) {
             if (entry != NULL)
             {             
                 entry->index = num_all_entries;
-                entry->is_main_exec = 0;
+                entry->mapping_type = OTHER_MAPPING;
+                entry->is_main_binary = 0;
 
                 // Parse the line and store the values in the entry structure
                 int ret = sscanf(line, "%lx-%lx %4s %lx %x:%x %d %4095[^\n]", &entry->start, &entry->end, entry->perms, &entry->offset, &entry->dev_major, &entry->dev_minor, &entry->inode, entry->pathname);
                 if (ret >= 7)
                 {
-                    // Check if the mapping is the main executable
-                    if ((!mapping_list->main_exec) && (magic_exists)) 
+                    if (magic_exists)
                     {
                         // Get the file type from libmagic if available
                         const char *file_type = magic_file(magic, entry->pathname);
                         if (file_type != NULL) {
+                            // Check if the mapping is an executable
                             if (strstr(file_type, "executable")) {
-                                mapping_list->main_exec = strdup(entry->pathname);
-                                entry->is_main_exec = 1;
+                                // Check if the executable is position-independent
+                                if (!strstr(file_type, "pie executable")) {
+                                    entry->mapping_type = BINARY_PIE;
+                                }
+                                else entry->mapping_type = BINARY_NONPIE;
+                                // If not given by the user, save the first executable mapping as the main binary
+                                if (!mapping_list->main_binary) {
+                                    mapping_list->main_binary = strdup(entry->pathname);
+                                }
+                            }
+                            else if (strstr(file_type, "shared object")) {
+                                entry->mapping_type = SHARED_LIBRARY;
                             }
                         }
                     }
-                    else if ((mapping_list->main_exec) && (strcmp(entry->pathname, mapping_list->main_exec) == 0)) {
-                        entry->is_main_exec = 1;
-                    }                  
 
                     entry->next_all = NULL;
                     entry->next_exec = NULL;
@@ -125,26 +135,29 @@ maps_t * maps_parse_file(char *maps_file, int options) {
     mapping_list->exec_entries = head_exec;
     mapping_list->num_exec_entries = num_exec_entries;
 
-    // If we failed to identify the main executable through libmagic, assume it's the first executable mapping entry (usually, but not always!)
+    // If the main binary was not provided by user, and we failed to identify it through libmagic, 
+    // assume it's the first executable mapping entry (usually, but not always!)
     // TODO: Improve this heuristic, filtering out shared objects with ".so" extension, etc.
-    if (!mapping_list->main_exec) {
+    if (!mapping_list->main_binary) {
         maps_entry_t *first_exec_entry = mapping_list->exec_entries;
         if (first_exec_entry != NULL) 
         {
-            mapping_list->main_exec = strdup(first_exec_entry->pathname);
-            maps_entry_t *entry = mapping_list->all_entries;
-            while (entry != NULL)
-            {
-                if (strcmp(entry->pathname, mapping_list->main_exec) == 0) {
-                    entry->is_main_exec = 1;
-                }
-                entry = entry->next_all;
-            }
+            mapping_list->main_binary = strdup(first_exec_entry->pathname);
         }
     }
 
-    // Read the symbol tables for all mappings if requested
+    // Flag any entry with the same pathname as the main binary (there are non-exec mappings before the 1st exec mapping for the same binary)
     maps_entry_t *entry = mapping_list->all_entries;
+    while (entry != NULL)
+    {
+        if (strcmp(entry->pathname, mapping_list->main_binary) == 0) {
+            entry->is_main_binary = 1;
+        }
+        entry = entry->next_all;
+    }
+
+    // Read the symbol tables for all mappings if requested
+    entry = mapping_list->all_entries;
     while (entry != NULL) {
         entry->symtab = NULL;
         if (options & OPTION_READ_SYMTAB) {
@@ -175,7 +188,7 @@ void maps_free(maps_t *mapping_list)
             free(entry);
             entry = next;
         }
-        free(mapping_list->main_exec);
+        free(mapping_list->main_binary);
         free(mapping_list);
     }
 }

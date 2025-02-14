@@ -172,14 +172,14 @@ static addr2line_t * addr2line_init(char *object, maps_t *parsed_maps, int optio
 	}
 	else {
 		// Check if the object is a binary file or a maps file and store it
-		int is_binary = is_binary_file(object);
-		int is_mapping = !is_binary;
+		is_binary = is_binary_file(object);
+		is_mapping = !is_binary;
 		backend->inputObject = strdup(object);
 
 		// Parse the /proc/self/maps file if given
 		backend->procMaps = NULL;
 		if (is_mapping)	{
-			backend->procMaps = maps_parse_file(object, 0);
+			backend->procMaps = maps_parse_file(object, NULL, 0);
 		}
 	}
 
@@ -191,6 +191,7 @@ static addr2line_t * addr2line_init(char *object, maps_t *parsed_maps, int optio
 		 * so we will instantiate individual addr2line processes for each 
 		 * executable mapping in the maps file.
 		 */
+		fprintf(stderr, "addr2line_init: binutils backend with maps file\n");
 		int num_exec_entries = exec_mappings_size(backend->procMaps);
 		backend->numProcesses = num_exec_entries;
 
@@ -249,21 +250,23 @@ static void * adjust_address(addr2line_t *backend, void *address, addr2line_proc
 	void *adjusted_address = address;
 	
 	// Only binutils require manual adjustment of the address to the mapping offset.
-	if (backend->useBackend == USE_BINUTILS)
+	if ((backend->useBackend == USE_BINUTILS) && (backend->procMaps))
 	{
 		// If multiple addr2line processes are used, find the one whose mapping contains the address
 		for (int i = 0; i < backend->numProcesses; ++i)
 		{
 			addr2line_process_t *current_process = &backend->processList[i];
-			if ((address_in_mapping(current_process->execMapping, (unsigned long)address)) && (!mapping_is_main_exec(current_process->execMapping)))
+
+			// The check for mapping_is_position_independent relies entirely on libmagic and is quite heuristic
+			if ((address_in_mapping(current_process->execMapping, (unsigned long)address)) && (!mapping_is_at_fixed_base_address(current_process->execMapping)))
 			{
-				/* TL;DR: Adjust the address to the mapping offset only for shared libraries (and not for the main executable).
-				 *        This applies both to non-PIE and PIE (compiled/linked with -fPIE/-pie) executables.
-				 *        TODO: Check with PIE executables with ASLR (address randomization) disabled.
+				/* TL;DR: Adjust the address to the mapping offset.
+				 *        This applies both to shared libraries and -fPIE/-pie executables, regardless of ASLR.
+				 *        Offsets do not apply to -no-pie executables that are mapped to a fixed base address (usually 0x400000).
 				 *
-				 * XXX: In our experiments, we have observed that for a given executable or shared library, 
-				 * there are multiple mappings in the maps file, with only one being executable [--x-], 
-				 * which is not the first entry in the list, e.g.:
+				 * The following example illustrates the /proc/self/maps for a -no-pie executable linked with a shared library.
+				 * We have observed that for a given binary or shared library, there are multiple mappings in the maps file, 
+				 * with only one being executable [--x-], which is not the first entry in the list, e.g.:
 				 *
 				 * 00400000-00403000 r--p 00000000 00:2f 391035422   my_main
 				 * 00403000-0047a000 r-xp 00003000 00:2f 391035422   my_main
@@ -283,7 +286,7 @@ static void * adjust_address(addr2line_t *backend, void *address, addr2line_proc
 				 * bye_world
 				 * /home/user/libshared.c:13
 				 * 
-				 * However, if the same offset operation is applied to an address from the main executable, 
+				 * However, if the same offset operation is applied to an address from the main binary, 
 				 * the translation fails. In the example, the adjusted address would be computed as:
 				 * 0x403e46 (original) - 00403000 (start) + 00003000 (offset) = 0x3e46
 				 * 
@@ -292,14 +295,19 @@ static void * adjust_address(addr2line_t *backend, void *address, addr2line_proc
 				 * ??
 				 * ??:0
 				 * 
-				 * For the addresses from the main executable, we need to leave them unchanged for the translation to work:
+				 * For the addresses from -no-pie executables that belong to the main binary, we need to leave them 
+				 * unchanged for the translation to work:
+				 * 
 				 * > binutils-addr2line -e my_main 0x403e46 
 				 * hello_world
 				 * /home/user/my_main.c:42
 				 * 
-				 * Note that the first entry in the maps file for the main executable is mapped at offset zero:
+				 */
+
+				/*
+				 * Regardless of -fPIE / -no-pie, note that the first entry in the maps file for the main binary is mapped at offset zero:
 				 *                               
-				 * 00400000-00403000 r--p 00000000 00:2f 391035422   my_main <= The first mapping for the main executable is offset zero
+				 * 00400000-00403000 r--p 00000000 00:2f 391035422   my_main <= The first mapping for the main binary is offset zero
 				 * 00403000-0047a000 r-xp 00003000 00:2f 391035422   my_main <= Address 0x403e46 belongs to this mapping
 				 *  
 				 * It's not clear if some extra offsetting would be necessary if the first entry offset was above zero. 
@@ -523,7 +531,7 @@ void addr2line_translate(addr2line_t *backend, void *address, code_loc_t *code_l
 		// If the input was a maps file (elfutils), find the mapping that contains the address
 		maps_entry_t *entry = search_in_exec_mappings(backend->procMaps, (unsigned long)address);
 		if (entry != NULL) code_loc->mapping_name = strdup(entry->pathname);
-		else code_loc->mapping_name = strdup(maps_main_exec(backend->procMaps));
+		else code_loc->mapping_name = strdup(maps_main_binary(backend->procMaps));
 	}
 	else {
 		// If no maps file was given (binutils/elfutils), use the input binary as the mapping name

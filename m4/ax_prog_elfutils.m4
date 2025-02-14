@@ -2,6 +2,7 @@
 # ----------------
 AC_DEFUN([AX_PROG_ELFUTILS],
 [
+  AX_FLAGS_SAVE()
   AC_ARG_WITH([elfutils-addr2line],
     AS_HELP_STRING(
       [--with-elfutils-addr2line=@<:@=FILE@:>@],
@@ -33,4 +34,5 @@ AC_DEFUN([AX_PROG_ELFUTILS],
   else
     AC_MSG_RESULT([not available])
   fi
+  AX_FLAGS_RESTORE()
 ])

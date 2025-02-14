@@ -5,6 +5,13 @@
 // Available configuration options
 #define OPTION_READ_SYMTAB             (1 << 0) // Read the symbol table for each mapping 
 
+typedef enum {
+    BINARY_PIE,
+    BINARY_NONPIE,
+    SHARED_LIBRARY,
+    OTHER_MAPPING
+} mapping_type_t;
+
 /**
  * Structure to hold a single entry from the /proc/self/maps file.
  */
@@ -21,7 +28,8 @@ typedef struct maps_entry {
     struct maps_entry *next_all;  // Next in the list of all entries
     struct maps_entry *next_exec; // Next in the list of executable entries
     symtab_t *symtab;             // Symbol table for the mapping
-    int is_main_exec;             // Flag to indicate the main executable
+    int is_main_binary;           // Flag to indicate the main binary
+    mapping_type_t mapping_type;  // Type of the mapping
 } maps_entry_t;
 
 /**
@@ -33,10 +41,10 @@ typedef struct maps_t {
     int num_all_entries;          // Number of all entries
     maps_entry_t *exec_entries;   // List of executable entries
     int num_exec_entries;         // Number of executable entries
-    char *main_exec;              // Path to the main executable
+    char *main_binary;            // Path to the main binary
 } maps_t;
 
-maps_t * maps_parse_file(char *maps_file, int options);
+maps_t * maps_parse_file(char *maps_file, char *main_binary, int options);
 void maps_free(maps_t *mapping_list);
 maps_entry_t * maps_find_by_address(maps_entry_t *mapping_list, unsigned long address, int search_filter);
 
@@ -48,8 +56,9 @@ enum {
 // Compute the address relative to the base address of the given mapping 
 #define absolute_to_relative(mapping, address) (mapping != NULL ? address - mapping->start + mapping->offset : address)
 
-// Check if the mapping is the main executable
-#define mapping_is_main_exec(mapping) (mapping->is_main_exec)
+// Check if the mapping is the main binary
+#define mapping_is_main_binary(mapping) (mapping->is_main_binary)
+#define mapping_is_at_fixed_base_address(mapping) (mapping->start - mapping->offset == DL_FIXED_BASE_ADDRESS)
 
 // Macros to search for an address in the mappings
 #define search_in_all_mappings(maps, address) maps_find_by_address(maps->all_entries, address, SEARCH_ALL)
@@ -76,5 +85,5 @@ enum {
 // Macro to get the path to the maps file
 #define maps_path(mapping_list) (mapping_list->path)
 
-// Macro to get the path to the main executable
-#define maps_main_exec(mapping_list) (mapping_list->main_exec)
+// Macro to get the path to the main binary
+#define maps_main_binary(mapping_list) (mapping_list->main_binary)

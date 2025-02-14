@@ -22,6 +22,9 @@ LT_INIT
 AC_PROG_CC           # Check for C compiler
 AC_PROG_INSTALL      # Check for install program
 
+# Check for binaries' fixed base address
+AX_GET_FIXED_BASE_ADDRESS
+
 # Check for binutils backend
 AX_PROG_BINUTILS
 

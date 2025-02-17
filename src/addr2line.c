@@ -470,7 +470,7 @@ void addr2line_translate(addr2line_t *backend, void *address, code_loc_t *code_l
 	char buf[BUFSIZ];
 	void *adjusted_address_ptr = NULL;
 	char *adjusted_address_str = NULL;
-	int successful_translation = 0; 
+	int translated = 0; 
 
 	// Select the addr2line process to use and invoke it
 	addr2line_process_t *translator = invoke_translator(backend, address, &adjusted_address_ptr, &adjusted_address_str);
@@ -486,7 +486,7 @@ void addr2line_translate(addr2line_t *backend, void *address, code_loc_t *code_l
 		// Copying the function name only if has been translated
 		if (strcmp(buf, UNKNOWN_ADDRESS) != 0) {
 			code_loc->function = strdup(buf);
-			successful_translation = 1;
+			translated = 1;
 		}
 	}
 
@@ -504,7 +504,7 @@ void addr2line_translate(addr2line_t *backend, void *address, code_loc_t *code_l
 			{
 				code_loc->column = atoi(last_colon + 1);
 				*last_colon = '\0'; 
-				if (code_loc->column > 0) successful_translation = 1;
+				if (code_loc->column > 0) translated = 1;
 			}
 		}
 #endif
@@ -514,14 +514,15 @@ void addr2line_translate(addr2line_t *backend, void *address, code_loc_t *code_l
 		{
 			code_loc->line = atoi(first_colon + 1);
 			*first_colon = '\0'; 
-			if (code_loc->line > 0) successful_translation = 1;
+			if (code_loc->line > 0) translated = 1;
 		}
 		// Copying the filename only if has been translated
 		if (strcmp(buf, UNKNOWN_ADDRESS) != 0) {
 			code_loc->file = strdup(buf);
-			successful_translation = 1;
+			translated = 1;
 		}
 	}
+	code_loc->translated = translated;
 
 	// Make sure we return something for function and file when the translation fails
 	if (code_loc->function == NULL) code_loc->function = strdup((backend->setOptions & OPTION_KEEP_UNRESOLVED_ADDRESSES) ? adjusted_address_str : UNKNOWN_ADDRESS);
@@ -540,7 +541,7 @@ void addr2line_translate(addr2line_t *backend, void *address, code_loc_t *code_l
 	}
 	else {
 		// If no maps file was given (binutils/elfutils), use the input binary as the mapping name only when the translation was successful
-		if (successful_translation) code_loc->mapping_name = strdup(backend->inputObject);
+		if (translated) code_loc->mapping_name = strdup(backend->inputObject);
 		else code_loc->mapping_name = strdup(UNKNOWN_ADDRESS);
 	}
 

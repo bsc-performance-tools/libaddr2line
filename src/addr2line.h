@@ -21,6 +21,7 @@ typedef struct code_loc
 	int line;
 	int column;
 	char *function;
+	int translated;
 } code_loc_t;
 
 typedef struct addr2line_process

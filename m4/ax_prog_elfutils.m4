@@ -6,33 +6,39 @@ AC_DEFUN([AX_PROG_ELFUTILS],
   AC_ARG_WITH([elfutils-addr2line],
     AS_HELP_STRING(
       [--with-elfutils-addr2line=@<:@=FILE@:>@],
-      [specify where to find elfutils' addr2line command]
+      [Specify where to find elfutils' addr2line command]
     ),
     [elfutils_cmd="${withval}"],
-    [elfutils_cmd=""]
+    [elfutils_cmd="no"]
   )
 
-  AC_MSG_CHECKING([for elfutils' addr2line command])
-  if test -f "${elfutils_cmd}"; then
-    AC_MSG_RESULT([${elfutils_cmd}])
-    AC_DEFINE([HAVE_ELFUTILS], [1], [Define to 1 if elfutils' addr2line command is available])
-    AC_DEFINE_UNQUOTED([ELFUTILS_ADDR2LINE], ["${elfutils_cmd}"], [Path to elfutil's addr2line command])
+  if test "${elfutils_cmd}" != "no"; then
+    AC_MSG_CHECKING([for elfutils' addr2line command])
+    if test -f "${elfutils_cmd}"; then
 
-    # Get the root path
-    elfutils_home=`dirname $(dirname ${elfutils_cmd})`  
+      # Get the root path
+      elfutils_home=`dirname $(dirname ${elfutils_cmd})`
     
-    # Test for includes
-    CFLAGS="-I${elfutils_home}/include"
-    AC_CHECK_HEADERS([libelf.h], [], [AC_MSG_ERROR([Required header libelf.h not found in ${elfutils_home}/include. Ensure it's installed.])])
-    AC_CHECK_HEADERS([gelf.h], [], [AC_MSG_ERROR([Required header gelf.h not found in ${elfutils_home}/include. Ensure it's installed.])])
-    AC_SUBST(ELFUTILS_CFLAGS, ${CFLAGS})
+      # Test for includes
+      CFLAGS="-I${elfutils_home}/include"
+      AC_CHECK_HEADERS([libelf.h], [], [AC_MSG_ERROR([Required header libelf.h not found in ${elfutils_home}/include. Ensure it's installed.])])
+      AC_CHECK_HEADERS([gelf.h], [], [AC_MSG_ERROR([Required header gelf.h not found in ${elfutils_home}/include. Ensure it's installed.])])
+      AC_SUBST(ELFUTILS_CFLAGS, ${CFLAGS})
 
-    # Test for libraries
-    LDFLAGS="-L${elfutils_home}/lib -lelf"
-    AC_SEARCH_LIBS(elf_begin, elf, [], [AC_MSG_ERROR([Required library libelf not found in ${elfutils_home/lib}. Ensure it's installed.])])
-    AC_SUBST(ELFUTILS_LDFLAGS, ${LDFLAGS})    
-  else
-    AC_MSG_RESULT([not available])
+      # Test for libraries
+      LDFLAGS="-L${elfutils_home}/lib -lelf"
+      AC_SEARCH_LIBS(elf_begin, elf, [], [AC_MSG_ERROR([Required library libelf not found in ${elfutils_home/lib}. Ensure it's installed.])])
+      AC_SUBST(ELFUTILS_LDFLAGS, ${LDFLAGS})
+
+      # Define config.h variables
+      AC_DEFINE([HAVE_ELFUTILS], [1], [Define to 1 if elfutils' addr2line command is available])
+      AC_DEFINE_UNQUOTED([ELFUTILS_ADDR2LINE], ["${elfutils_cmd}"], [Path to elfutil's addr2line command])
+
+      AC_MSG_RESULT([${elfutils_cmd}])
+    else
+      AC_MSG_ERROR([not found])
+    fi
   fi
+
   AX_FLAGS_RESTORE()
 ])

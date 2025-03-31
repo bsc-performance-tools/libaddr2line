@@ -2,7 +2,7 @@ ACLOCAL_AMFLAGS = -I m4
 
 include_HEADERS = maps.h addr2line.h symtab.h 
 
-lib_LTLIBRARIES = libsymtab.la libmaps.la libaddr2line.la 
+lib_LTLIBRARIES = libsymtab.la libmaps.la libaddr2line.la
 
 libsymtab_la_SOURCES = symtab.c
 libsymtab_la_CFLAGS = @ELFUTILS_CFLAGS@

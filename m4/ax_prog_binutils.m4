@@ -5,7 +5,7 @@ AC_DEFUN([AX_PROG_BINUTILS],
   AC_ARG_WITH([binutils-addr2line],
     AS_HELP_STRING(
       [--with-binutils-addr2line=@<:@=FILE@:>@],
-      [specify where to find binutils' addr2line command]
+      [Specify where to find binutils' addr2line command]
     ),
     [binutils_cmd="${withval}"],
     [binutils_cmd=""]

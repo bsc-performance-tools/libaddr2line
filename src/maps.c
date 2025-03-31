@@ -161,7 +161,7 @@ maps_t * maps_parse_file(char *maps_file, char *main_binary, int options) {
     while (entry != NULL) {
         entry->symtab = NULL;
         if (options & OPTION_READ_SYMTAB) {
-            entry->symtab = symtab_list_objects(entry->pathname);
+            entry->symtab = symtab_read(entry->pathname);
         }
         entry = entry->next_all;
     }

@@ -47,6 +47,7 @@ typedef struct maps_t {
 maps_t * maps_parse_file(char *maps_file, char *main_binary, int options);
 void maps_free(maps_t *mapping_list);
 maps_entry_t * maps_find_by_address(maps_entry_t *mapping_list, unsigned long address, int search_filter);
+maps_entry_t * maps_find_main_binary(maps_entry_t *mapping_list);
 
 enum {
     SEARCH_ALL = 0,
@@ -81,6 +82,9 @@ enum {
 #define exec_mappings(mapping_list) (mapping_list->exec_entries)
 #define exec_mappings_size(mapping_list) (mapping_list->num_exec_entries)
 #define next_exec_mapping(entry) (entry->next_exec)
+
+// Macro to get the executable mapping that corresponds to the main binary
+#define main_exec_mapping(mapping_list) maps_find_main_binary(mapping_list->exec_entries)
 
 // Macro to get the path to the maps file
 #define maps_path(mapping_list) (mapping_list->path)

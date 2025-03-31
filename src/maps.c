@@ -202,7 +202,8 @@ void maps_free(maps_t *mapping_list)
  * @param address Address to search for
  * @return Pointer to the entry that contains the address, or NULL if not found
  */
-maps_entry_t * maps_find_by_address(maps_entry_t *mapping_list, unsigned long address, int search_filter) {
+maps_entry_t * maps_find_by_address(maps_entry_t *mapping_list, unsigned long address, int search_filter)
+{
     maps_entry_t *entry = mapping_list;
     while (entry != NULL)
     {
@@ -215,3 +216,24 @@ maps_entry_t * maps_find_by_address(maps_entry_t *mapping_list, unsigned long ad
     return NULL;
 }
 
+/**
+ * maps_find_main_binary
+ *
+ * Find the entry in the list of mappings that corresponds to the main binary.
+ *
+ * @param mapping_list Pointer to the list of mappings
+ * @return Pointer to the entry that corresponds to the main binary, or NULL if not found
+ */
+maps_entry_t * maps_find_main_binary(maps_entry_t *mapping_list)
+{
+    maps_entry_t *entry = mapping_list;
+    while (entry != NULL)
+    {
+        if (mapping_is_main_binary(entry))
+        {
+            return entry;
+        }
+        entry = entry->next_all;
+    }
+    return NULL;
+}

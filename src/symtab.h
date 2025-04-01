@@ -12,7 +12,7 @@ typedef struct symtab {
     int num_entries;
 } symtab_t;
 
-symtab_t *symtab_read(char *binary_path);
+symtab_t * symtab_read(char *binary_path);
 char * symtab_find_symbol(symtab_t *symtab, unsigned long addr);
 void symtab_free(symtab_t *symtab);
 

@@ -142,7 +142,6 @@ static void read_symtab_with_libelf(char *binary_path, symtab_t **symtab_out)
  *
  * Read the symbol table from a binary file.
  * Currently this operation is only supported through libelf.
- * If libelf is not available, this function will return an empty symtab_t structure (zero entries).
  *
  * @param binary_path The path to the binary file
  * @return A symtab_t structure containing the symbol table, or NULL if an error occurred
@@ -157,6 +156,8 @@ symtab_t *symtab_read(char *binary_path)
         symtab->num_entries = 0;
 #if defined(HAVE_ELFUTILS)
         read_symtab_with_libelf(binary_path, &symtab);
+#else
+# error "Symbol table dumping is only implemented using libelf. Enable elfutils support at configure time using --with-elfutils-addr2line"
 #endif
     }
     return symtab;

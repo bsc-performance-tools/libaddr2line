@@ -160,9 +160,12 @@ maps_t * maps_parse_file(char *maps_file, char *main_binary, int options) {
     entry = mapping_list->all_entries;
     while (entry != NULL) {
         entry->symtab = NULL;
+
+#if defined(HAVE_LIBSYMTAB)
         if (options & OPTION_READ_SYMTAB) {
             entry->symtab = symtab_read(entry->pathname);
         }
+#endif
         entry = entry->next_all;
     }
 
@@ -184,7 +187,9 @@ void maps_free(maps_t *mapping_list)
         while (entry != NULL)
         {
             maps_entry_t *next = entry->next_all;
+#if defined(HAVE_LIBSYMTAB)
             symtab_free(entry->symtab);
+#endif
             free(entry);
             entry = next;
         }

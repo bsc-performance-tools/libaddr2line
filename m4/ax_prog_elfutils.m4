@@ -12,9 +12,12 @@ AC_DEFUN([AX_PROG_ELFUTILS],
     [elfutils_cmd="no"]
   )
 
+  AC_MSG_CHECKING([for elfutils' addr2line command])
   if test "${elfutils_cmd}" != "no"; then
-    AC_MSG_CHECKING([for elfutils' addr2line command])
+    # TODO: Currently, this only checks for the presence of the file provided via --with-elfutils-addr2line
+    #       It does not verify that the file is actually a valid 'addr2line' executable
     if test -f "${elfutils_cmd}"; then
+      AC_MSG_RESULT([${elfutils_cmd}])
 
       # Get the root path
       elfutils_home=`dirname $(dirname ${elfutils_cmd})`
@@ -33,11 +36,13 @@ AC_DEFUN([AX_PROG_ELFUTILS],
       # Define config.h variables
       AC_DEFINE([HAVE_ELFUTILS], [1], [Define to 1 if elfutils' addr2line command is available])
       AC_DEFINE_UNQUOTED([ELFUTILS_ADDR2LINE], ["${elfutils_cmd}"], [Path to elfutil's addr2line command])
-
-      AC_MSG_RESULT([${elfutils_cmd}])
+      have_elfutils="yes"
     else
-      AC_MSG_ERROR([not found])
+      AC_MSG_RESULT([not found])
+      AC_MSG_ERROR([The value provided to --with-elfutils-addr2line must point to the 'addr2line' executable from elfutils.])
     fi
+  else
+    AC_MSG_RESULT([not available])
   fi
 
   AX_FLAGS_RESTORE()

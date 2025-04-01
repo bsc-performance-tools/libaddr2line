@@ -389,19 +389,19 @@ static addr2line_process_t * invoke_translator(addr2line_t *backend, void *addre
 			* If the non-persistent option is set, the address is passed directly to the addr2line command and the process will end after the translation.
 			* Otherwise, the process will stall in a read loop until the address is passed later through the pipe.
 			*/
-			char *argv_elfutils[] = { ELFUTILS_ADDR2LINE, "-C", "-f", "-i", (is_binary ? "-e" : "-M"), backend->inputObject, (backend->setOptions & OPTION_NON_PERSISTENT ? adjusted_address_chomp : NULL), NULL };
-			char *argv_binutils[] = { BINUTILS_ADDR2LINE, "-C", "-f", "-e", (is_binary ? backend->inputObject : translator->execMapping->pathname), (backend->setOptions & OPTION_NON_PERSISTENT ? adjusted_address_chomp : NULL), NULL };
 			char **argv = NULL;
-	#if defined(HAVE_ELFUTILS)
+#if defined(HAVE_ELFUTILS)
+			char *argv_elfutils[] = { ELFUTILS_ADDR2LINE, "-C", "-f", "-i", (is_binary ? "-e" : "-M"), backend->inputObject, (backend->setOptions & OPTION_NON_PERSISTENT ? adjusted_address_chomp : NULL), NULL };
 			if (backend->useBackend == USE_ELFUTILS) {
 				argv = argv_elfutils;			
 			}
-	#endif
-	#if defined(HAVE_BINUTILS)
+#endif
+#if defined(HAVE_BINUTILS)
+			char *argv_binutils[] = { BINUTILS_ADDR2LINE, "-C", "-f", "-e", (is_binary ? backend->inputObject : translator->execMapping->pathname), (backend->setOptions & OPTION_NON_PERSISTENT ? adjusted_address_chomp : NULL), NULL };
 			if (backend->useBackend == USE_BINUTILS) {
 				argv = argv_binutils;
 			}
-	#endif
+#endif
 			// Replaces the current process with addr2line backend
 			execvp(argv[0], argv);
 		}

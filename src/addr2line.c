@@ -9,6 +9,7 @@
 #include "config.h"
 
 #define UNKNOWN_ADDRESS "??"
+#define UNKNOWN_MAPPING "??"
 
 // Available addr2line backends
 enum {
@@ -179,7 +180,7 @@ static addr2line_t * addr2line_init(char *object, maps_t *parsed_maps, int optio
 		// Parse the /proc/self/maps file if given
 		backend->procMaps = NULL;
 		if (is_mapping)	{
-			backend->procMaps = maps_parse_file(object, NULL, 0);
+			backend->procMaps = maps_parse_file(object, 0);
 		}
 	}
 
@@ -537,12 +538,12 @@ void addr2line_translate(addr2line_t *backend, void *address, code_loc_t *code_l
 		// If the input was a maps file (elfutils), find the mapping that contains the address
 		maps_entry_t *entry = search_in_exec_mappings(backend->procMaps, (unsigned long)address);
 		if (entry != NULL) code_loc->mapping_name = strdup(entry->pathname);
-		else code_loc->mapping_name = strdup(maps_main_binary(backend->procMaps));
+		else code_loc->mapping_name = strdup(UNKNOWN_MAPPING);
 	}
 	else {
 		// If no maps file was given (binutils/elfutils), use the input binary as the mapping name only when the translation was successful
 		if (translated) code_loc->mapping_name = strdup(backend->inputObject);
-		else code_loc->mapping_name = strdup(UNKNOWN_ADDRESS);
+		else code_loc->mapping_name = strdup(UNKNOWN_MAPPING);
 	}
 
 	// Free resources

@@ -19,7 +19,7 @@
  * @param main_binary Absolute path to the main binary (optional)
  * @param mapping_list Pointer to the maps_t structure to store the mappings
  */
-maps_t * maps_parse_file(char *maps_file, char *main_binary, int options) {
+maps_t * maps_parse_file(char *maps_file, int options) {
     int num_all_entries = 0, num_exec_entries = 0; 
     maps_entry_t *head_all = NULL, *tail_all = NULL;
     maps_entry_t *head_exec = NULL, *tail_exec = NULL;
@@ -29,7 +29,6 @@ maps_t * maps_parse_file(char *maps_file, char *main_binary, int options) {
         return NULL;
     }
     mapping_list->path = strdup(maps_file);
-    mapping_list->main_binary = (main_binary != NULL ? strdup(main_binary) : NULL); 
     
     // Open the maps file
     FILE *fd = fopen(maps_file, "r");
@@ -53,7 +52,6 @@ maps_t * maps_parse_file(char *maps_file, char *main_binary, int options) {
             {             
                 entry->index = num_all_entries;
                 entry->mapping_type = OTHER_MAPPING;
-                entry->is_main_binary = 0;
 
                 // Parse the line and store the values in the entry structure
                 int ret = sscanf(line, "%lx-%lx %4s %lx %x:%x %d %4095[^\n]", &entry->start, &entry->end, entry->perms, &entry->offset, &entry->dev_major, &entry->dev_minor, &entry->inode, entry->pathname);
@@ -71,10 +69,6 @@ maps_t * maps_parse_file(char *maps_file, char *main_binary, int options) {
                                     entry->mapping_type = BINARY_PIE;
                                 }
                                 else entry->mapping_type = BINARY_NONPIE;
-                                // If not given by the user, save the first executable mapping as the main binary
-                                if (!mapping_list->main_binary) {
-                                    mapping_list->main_binary = strdup(entry->pathname);
-                                }
                             }
                             else if (strstr(file_type, "shared object")) {
                                 entry->mapping_type = SHARED_LIBRARY;
@@ -135,29 +129,8 @@ maps_t * maps_parse_file(char *maps_file, char *main_binary, int options) {
     mapping_list->exec_entries = head_exec;
     mapping_list->num_exec_entries = num_exec_entries;
 
-    // If the main binary was not provided by user, and we failed to identify it through libmagic, 
-    // assume it's the first executable mapping entry (usually, but not always!)
-    // TODO: Improve this heuristic, filtering out shared objects with ".so" extension, etc.
-    if (!mapping_list->main_binary) {
-        maps_entry_t *first_exec_entry = mapping_list->exec_entries;
-        if (first_exec_entry != NULL) 
-        {
-            mapping_list->main_binary = strdup(first_exec_entry->pathname);
-        }
-    }
-
-    // Flag any entry with the same pathname as the main binary (there are non-exec mappings before the 1st exec mapping for the same binary)
-    maps_entry_t *entry = mapping_list->all_entries;
-    while (entry != NULL)
-    {
-        if (strcmp(entry->pathname, mapping_list->main_binary) == 0) {
-            entry->is_main_binary = 1;
-        }
-        entry = entry->next_all;
-    }
-
     // Read the symbol tables for all mappings if requested
-    entry = mapping_list->all_entries;
+    maps_entry_t *entry = mapping_list->all_entries;
     while (entry != NULL) {
         entry->symtab = NULL;
 
@@ -193,7 +166,6 @@ void maps_free(maps_t *mapping_list)
             free(entry);
             entry = next;
         }
-        free(mapping_list->main_binary);
         free(mapping_list);
     }
 }
@@ -221,24 +193,43 @@ maps_entry_t * maps_find_by_address(maps_entry_t *mapping_list, unsigned long ad
     return NULL;
 }
 
+#if 0
 /**
- * maps_find_main_binary
+ * maps_find_by_name
  *
- * Find the entry in the list of mappings that corresponds to the main binary.
+ * Finds all entries in the list of mappings that corresponds to the given name.
  *
  * @param mapping_list Pointer to the list of mappings
- * @return Pointer to the entry that corresponds to the main binary, or NULL if not found
+ * @param name Name of the mapping to search for
+ * @return Pointer to a NULL-terminated array of pointers to matching entries, or NULL if not found
  */
-maps_entry_t * maps_find_main_binary(maps_entry_t *mapping_list)
+maps_entry_t ** maps_find_by_name(maps_entry_t *mapping_list, const char *name)
 {
+    int count_matches = 0;
+    maps_entry_t **matching_entries = NULL;
+
     maps_entry_t *entry = mapping_list;
     while (entry != NULL)
     {
-        if (mapping_is_main_binary(entry))
-        {
-            return entry;
-        }
-        entry = entry->next_all;
+        if (strcmp(entry->pathname, name) == 0) count_matches++;
     }
-    return NULL;
+    if (count_matches > 0)
+    {
+        matching_entries = malloc(sizeof(maps_entry_t *) * count_matches + 1);
+        if (matching_entries != NULL) 
+        {
+            matching_entries[count_matches] = NULL; // Null-terminate the array
+
+            entry = mapping_list;
+            for (int i = 0; i < count_matches; i++)
+            {
+                if (strcmp(entry->pathname, name) == 0)
+                {
+                    matching_entries[count_matches] = entry;
+                }
+            }
+        }
+    }
+    return matching_entries;
 }
+#endif

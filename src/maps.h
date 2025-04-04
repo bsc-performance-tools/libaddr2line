@@ -28,7 +28,6 @@ typedef struct maps_entry {
     struct maps_entry *next_all;  // Next in the list of all entries
     struct maps_entry *next_exec; // Next in the list of executable entries
     symtab_t *symtab;             // Symbol table for the mapping
-    int is_main_binary;           // Flag to indicate the main binary
     mapping_type_t mapping_type;  // Type of the mapping
 } maps_entry_t;
 
@@ -41,13 +40,14 @@ typedef struct maps_t {
     int num_all_entries;          // Number of all entries
     maps_entry_t *exec_entries;   // List of executable entries
     int num_exec_entries;         // Number of executable entries
-    char *main_binary;            // Path to the main binary
 } maps_t;
 
-maps_t * maps_parse_file(char *maps_file, char *main_binary, int options);
+maps_t * maps_parse_file(char *maps_file, int options);
 void maps_free(maps_t *mapping_list);
 maps_entry_t * maps_find_by_address(maps_entry_t *mapping_list, unsigned long address, int search_filter);
-maps_entry_t * maps_find_main_binary(maps_entry_t *mapping_list);
+#if 0
+maps_entry_t ** maps_find_by_name(maps_entry_t *mapping_list, const char *name);
+#endif
 
 enum {
     SEARCH_ALL = 0,
@@ -58,7 +58,6 @@ enum {
 #define absolute_to_relative(mapping, address) (mapping != NULL ? address - mapping->start + mapping->offset : address)
 
 // Check if the mapping is the main binary
-#define mapping_is_main_binary(mapping) (mapping->is_main_binary)
 #define mapping_is_at_fixed_base_address(mapping) (mapping->start - mapping->offset == DL_FIXED_BASE_ADDRESS)
 
 // Macros to search for an address in the mappings
@@ -83,11 +82,5 @@ enum {
 #define exec_mappings_size(mapping_list) (mapping_list->num_exec_entries)
 #define next_exec_mapping(entry) (entry->next_exec)
 
-// Macro to get the executable mapping that corresponds to the main binary
-#define main_exec_mapping(mapping_list) maps_find_main_binary(mapping_list->exec_entries)
-
 // Macro to get the path to the maps file
 #define maps_path(mapping_list) (mapping_list->path)
-
-// Macro to get the path to the main binary
-#define maps_main_binary(mapping_list) (mapping_list->main_binary)

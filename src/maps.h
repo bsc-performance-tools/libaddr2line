@@ -2,6 +2,8 @@
 
 #include "symtab.h"
 
+#define UNKNOWN_MAPPING "??"
+
 // Available configuration options
 #define OPTION_READ_SYMTAB             (1 << 0) // Read the symbol table for each mapping 
 
@@ -45,9 +47,6 @@ typedef struct maps_t {
 maps_t * maps_parse_file(char *maps_file, int options);
 void maps_free(maps_t *mapping_list);
 maps_entry_t * maps_find_by_address(maps_entry_t *mapping_list, unsigned long address, int search_filter);
-#if 0
-maps_entry_t ** maps_find_by_name(maps_entry_t *mapping_list, const char *name);
-#endif
 
 enum {
     SEARCH_ALL = 0,
@@ -82,5 +81,7 @@ enum {
 #define exec_mappings_size(mapping_list) (mapping_list->num_exec_entries)
 #define next_exec_mapping(entry) (entry->next_exec)
 
-// Macro to get the path to the maps file
+// Macros to get the path to the maps file and to a given mapping
 #define maps_path(mapping_list) (mapping_list->path)
+#define mapping_path(mapping_entry) (mapping_entry->pathname == "" ? UNKNOWN_MAPPING : mapping_entry->pathname)
+

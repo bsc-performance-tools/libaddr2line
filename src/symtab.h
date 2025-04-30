@@ -1,5 +1,7 @@
 #pragma once
 
+#define UNKNOWN_SYMBOL "??"
+
 typedef struct symtab_entry {
     char *name;
     unsigned long start;
@@ -19,3 +21,9 @@ void symtab_free(symtab_t *symtab);
 // Macros to iterate over the symtab_t structure
 #define symtab_count(symtab) (symtab != NULL ? symtab->num_entries : 0)
 #define symtab_get_entry(symtab, i) (symtab != NULL && i >= 0 && i < symtab->num_entries ? &symtab->entries[i] : NULL)  
+
+/*
+ * Macro to prettify symbol names - for now just changes NULL symbols to the UNKNOWN_SYMBOL constant,
+ * but could be extended to demangle C++ symbols or format them in some other way.
+ */
+#define symtab_prettify_symbol_name(symbol_name) (symbol_name == NULL ? UNKNOWN_SYMBOL : symbol_name)

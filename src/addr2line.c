@@ -8,9 +8,6 @@
 #include "addr2line.h"
 #include "config.h"
 
-#define UNKNOWN_ADDRESS "??"
-#define UNKNOWN_MAPPING "??"
-
 // Available addr2line backends
 enum {
 #if defined(HAVE_ELFUTILS)

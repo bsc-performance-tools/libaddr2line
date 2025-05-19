@@ -166,13 +166,13 @@ symtab_t *symtab_read(char *binary_path)
 /**
  * symtab_find_symbol
  * 
- * Given an address, return the name of the symbol that contains it.
+ * Find the symbol that contains the given address in the provided symtab_t structure.
  * 
  * @param symtab The symtab_t structure containing the symbol table
  * @param addr The address to look up
  * @return The name of the symbol containing the address, or NULL if not found
  */
-char * symtab_find_symbol(symtab_t *symtab, unsigned long addr)
+static char * symtab_find_symbol(symtab_t *symtab, unsigned long addr)
 {
     int i;
     for (i = 0; i < symtab->num_entries; ++i) {
@@ -181,6 +181,25 @@ char * symtab_find_symbol(symtab_t *symtab, unsigned long addr)
         }
     }
     return NULL;
+}
+
+/**
+ * symtab_translate
+ *
+ * Translate an address to a symbol name using the provided symtab_t structure.
+ * TODO: Possibly exted to demangle C++ symbols or prettify them in some other way.
+ *
+ * @param symtab The symtab_t structure containing the symbol table
+ * @param addr The address to look up
+ * @return The name of the symbol containing the address, or UNKNOWN_SYMBOL if not found
+ */
+char * symtab_translate(symtab_t *symtab, unsigned long addr)
+{
+    char *symbol = NULL;
+    if (symtab != NULL) {
+        symbol = symtab_find_symbol(symtab, addr);
+    }
+    return strdup((symbol == NULL ? UNKNOWN_SYMBOL : symbol));
 }
 
 /**

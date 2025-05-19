@@ -529,13 +529,12 @@ void addr2line_translate(addr2line_t *backend, void *address, code_loc_t *code_l
 	// Get the mapping name
 	if (translator->execMapping != NULL) {
 		// If the addr2line process is associated with a specific mapping (binutils), use that mapping name
-		code_loc->mapping_name = strdup(translator->execMapping->pathname);
+		code_loc->mapping_name = strdup(mapping_path(translator->execMapping));
 	}
 	else if (backend->procMaps != NULL) {
 		// If the input was a maps file (elfutils), find the mapping that contains the address
 		maps_entry_t *entry = search_in_exec_mappings(backend->procMaps, (unsigned long)address);
-		if (entry != NULL) code_loc->mapping_name = strdup(entry->pathname);
-		else code_loc->mapping_name = strdup(UNKNOWN_MAPPING);
+		code_loc->mapping_name = strdup(mapping_path(entry));
 	}
 	else {
 		// If no maps file was given (binutils/elfutils), use the input binary as the mapping name only when the translation was successful

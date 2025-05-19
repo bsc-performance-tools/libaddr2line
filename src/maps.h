@@ -84,5 +84,6 @@ enum {
 
 // Macros to get the path to the maps file and to a given mapping
 #define maps_path(mapping_list) (mapping_list->path)
-#define mapping_path(mapping_entry) (!strcmp(mapping_entry->pathname, "") ? UNKNOWN_MAPPING : mapping_entry->pathname)
+#define mapping_path(mapping_entry) (mapping_entry != NULL ? (!strcmp(mapping_entry->pathname, "") ? UNKNOWN_MAPPING : mapping_entry->pathname) : UNKNOWN_MAPPING)
+
 

@@ -15,15 +15,10 @@ typedef struct symtab {
 } symtab_t;
 
 symtab_t * symtab_read(char *binary_path);
-char * symtab_find_symbol(symtab_t *symtab, unsigned long addr);
+char * symtab_translate(symtab_t *symtab, unsigned long addr);
 void symtab_free(symtab_t *symtab);
 
 // Macros to iterate over the symtab_t structure
 #define symtab_count(symtab) (symtab != NULL ? symtab->num_entries : 0)
 #define symtab_get_entry(symtab, i) (symtab != NULL && i >= 0 && i < symtab->num_entries ? &symtab->entries[i] : NULL)  
 
-/*
- * Macro to prettify symbol names - for now just changes NULL symbols to the UNKNOWN_SYMBOL constant,
- * but could be extended to demangle C++ symbols or format them in some other way.
- */
-#define symtab_prettify_symbol_name(symbol_name) (symbol_name == NULL ? UNKNOWN_SYMBOL : symbol_name)

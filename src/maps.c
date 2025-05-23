@@ -3,7 +3,10 @@
 #include <string.h>
 #include "config.h"
 #include "maps.h"
-#include "magic.h"
+
+#if defined(HAVE_LIBMAGIC)
+# include "magic.h"
+#endif
 
 #define SKIP_SPECIAL_MAPPINGS // Define this to exclude special entries from the list of executable mappings (e.g., stack, heap, vdso, vvar, vsyscall, etc.) 
 
@@ -34,6 +37,7 @@ maps_t * maps_parse_file(char *maps_file, int options) {
     FILE *fd = fopen(maps_file, "r");
     if (fd != NULL)
     {
+#if defined(HAVE_LIBMAGIC)
         // Initialize libmagic
         int magic_exists = 0;
         magic_t magic = magic_open(MAGIC_NONE);
@@ -43,7 +47,7 @@ maps_t * maps_parse_file(char *maps_file, int options) {
                 magic_exists = 1;
             }
         }
-
+#endif
         char line[BUFSIZ];
         while (fgets(line, sizeof(line), fd) != NULL)
         {
@@ -57,6 +61,7 @@ maps_t * maps_parse_file(char *maps_file, int options) {
                 int ret = sscanf(line, "%lx-%lx %4s %lx %x:%x %d %4095[^\n]", &entry->start, &entry->end, entry->perms, &entry->offset, &entry->dev_major, &entry->dev_minor, &entry->inode, entry->pathname);
                 if (ret >= 7)
                 {
+#if defined(HAVE_LIBMAGIC)
                     if (magic_exists)
                     {
                         // Get the file type from libmagic if available
@@ -75,7 +80,7 @@ maps_t * maps_parse_file(char *maps_file, int options) {
                             }
                         }
                     }
-
+#endif
                     entry->next_all = NULL;
                     entry->next_exec = NULL;
                     // Append the entry to the list of all mappings
@@ -117,9 +122,10 @@ maps_t * maps_parse_file(char *maps_file, int options) {
                 }
             }
         }
-
-      	// Clean up
-    	if (magic_exists) magic_close(magic);
+        // Clean up
+#if defined(HAVE_LIBMAGIC)
+        if (magic_exists) magic_close(magic);
+#endif
         fclose(fd);
     }
 

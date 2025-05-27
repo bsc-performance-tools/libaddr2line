@@ -181,6 +181,7 @@ static addr2line_t * addr2line_init(char *object, maps_t *parsed_maps, int optio
 		}
 	}
 
+#if defined(HAVE_BINUTILS)
 	// Determine the number of addr2line processes to spawn
 	if ((is_mapping) && (backend->useBackend == USE_BINUTILS)) 
 	{
@@ -208,6 +209,7 @@ static addr2line_t * addr2line_init(char *object, maps_t *parsed_maps, int optio
 		}
 	}
 	else 
+#endif
 	{
 		/*
 		* elfutils can directly process a /proc/self/maps file, allowing us to use a single addr2line instance.
@@ -246,7 +248,7 @@ static addr2line_t * addr2line_init(char *object, maps_t *parsed_maps, int optio
 static void * adjust_address(addr2line_t *backend, void *address, addr2line_process_t **translator)
 {
 	void *adjusted_address = address;
-	
+#if defined(HAVE_BINUTILS)
 	// Only binutils require manual adjustment of the address to the mapping offset.
 	if ((backend->useBackend == USE_BINUTILS) && (backend->procMaps))
 	{
@@ -317,6 +319,7 @@ static void * adjust_address(addr2line_t *backend, void *address, addr2line_proc
 			}
 		}
 	}
+#endif
 	// Default to the first addr2line process and leave the address unchanged
 	*translator = &backend->processList[0]; 
 	return address;

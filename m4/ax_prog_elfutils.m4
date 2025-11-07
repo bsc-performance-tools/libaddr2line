@@ -38,7 +38,7 @@ AC_DEFUN([AX_PROG_ELFUTILS],
 
       # Define config.h variables
       AC_DEFINE([HAVE_ELFUTILS], [1], [Define to 1 if elfutils' addr2line command is available])
-      AC_DEFINE_UNQUOTED([ELFUTILS_ADDR2LINE], ["${elfutils_cmd}"], [Path to elfutil's addr2line command])
+      AC_DEFINE_UNQUOTED([ELFUTILS_ADDR2LINE], ["${elfutils_cmd}"], [Path to elfutils' addr2line command])
       have_elfutils="yes"
     else
       AC_MSG_RESULT([not found])

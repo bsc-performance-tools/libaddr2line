@@ -18,7 +18,7 @@ AC_DEFUN([AX_PROG_BINUTILS],
     if test -f "${binutils_cmd}"; then
       AC_MSG_RESULT([${binutils_cmd}])
       AC_DEFINE([HAVE_BINUTILS], [1], [Define to 1 if binutils' addr2line command is available])
-      AC_DEFINE_UNQUOTED([BINUTILS_ADDR2LINE], ["${binutils_cmd}"], [Path to binutil's addr2line command])
+      AC_DEFINE_UNQUOTED([BINUTILS_ADDR2LINE], ["${binutils_cmd}"], [Path to binutils' addr2line command])
       have_binutils="yes"
     else
       AC_MSG_RESULT([not found])

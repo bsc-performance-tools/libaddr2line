@@ -28,11 +28,14 @@ AX_GET_FIXED_BASE_ADDRESS
 # Check for elfutils backend
 AX_PROG_ELFUTILS
 
+# Check for llvm-tools backend
+AX_PROG_LLVM_TOOLS
+
 # Check for binutils backend
 AX_PROG_BINUTILS
 
-if test "${have_elfutils}" != "yes" -a "${have_binutils}" != "yes"; then
-	AC_MSG_WARN([No translation back-end selected. Please configure the build with at least one of the following options: --with-elfutils-addr2line, --with-binutils-addr2line, or both.])
+if test "${have_elfutils}" != "yes" -a "${have_llvm_tools}" != "yes" -a "${have_binutils}" != "yes"; then
+	AC_MSG_WARN([No translation back-end selected. Please configure the build with at least one of the following options: --with-elfutils-addr2line, --with-llvm-tools-addr2line, --with-binutils-addr2line])
 fi
 
 # Optionally check for libraries or dependencies 

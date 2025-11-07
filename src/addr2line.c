@@ -8,27 +8,33 @@
 #include "addr2line.h"
 #include "config.h"
 
+
 // Available addr2line backends
 enum {
-#if defined(HAVE_ELFUTILS)
-	USE_ELFUTILS,
-#endif
-#if defined(HAVE_BINUTILS)
-	USE_BINUTILS,
-#endif
-	NUM_AVAILABLE_BACKENDS
+	#if defined(HAVE_ELFUTILS)
+		USE_ELFUTILS,
+	#endif
+	#if defined(HAVE_LLVM_TOOLS)
+		USE_LLVM_TOOLS,
+	#endif
+	#if defined(HAVE_BINUTILS)
+		USE_BINUTILS,
+	#endif
+		NUM_AVAILABLE_BACKENDS
 };
 
 // Default addr2line backend
 #if defined(HAVE_ELFUTILS)
-# define DEFAULT_BACKEND USE_ELFUTILS
+	#define DEFAULT_BACKEND USE_ELFUTILS
+#elif defined(HAVE_LLVM_TOOLS)
+	#define DEFAULT_BACKEND USE_LLVM_TOOLS
 #elif defined(HAVE_BINUTILS)
-# define DEFAULT_BACKEND USE_BINUTILS
+	#define DEFAULT_BACKEND USE_BINUTILS
 #else
-# error "No addr2line backend available"
+	#error "No addr2line backend available"
 #endif
 
-static addr2line_t * addr2line_init(char *object, maps_t *maps, int options);
+static addr2line_t *addr2line_init(char *object, maps_t *maps, int options);
 
 /**
  * select_backend
@@ -40,16 +46,21 @@ static int select_backend()
     char *env_libaddr2line_backend = getenv("LIBADDR2LINE_BACKEND");
 
 	if (env_libaddr2line_backend != NULL) {
-#if defined(HAVE_ELFUTILS)
-		if (!strcmp(env_libaddr2line_backend, "elfutils")) {
-			return USE_ELFUTILS;
-		}
-#endif
-#if defined(HAVE_BINUTILS)
-		if (!strcmp(env_libaddr2line_backend, "binutils")) {
-			return USE_BINUTILS;
-		}
-#endif
+		#if defined(HAVE_ELFUTILS)
+			if (!strcmp(env_libaddr2line_backend, "elfutils")) {
+				return USE_ELFUTILS;
+			}
+		#endif
+		#if defined(HAVE_LLVM_TOOLS)
+			if (!strcmp(env_libaddr2line_backend, "llvm-tools")) {
+				return USE_LLVM_TOOLS;
+			}
+		#endif
+		#if defined(HAVE_BINUTILS)
+			if (!strcmp(env_libaddr2line_backend, "binutils")) {
+				return USE_BINUTILS;
+			}
+		#endif
 	}
 	return DEFAULT_BACKEND;
 }
@@ -122,18 +133,17 @@ static ssize_t write_with_retry(int fd, const void *buf, size_t count) {
  * @param options Configuration options for the addr2line process.
  * @return Pointer to the addr2line backend handler.
  */
-
-addr2line_t * addr2line_init_file(char *object, int options)
+addr2line_t *addr2line_init_file(char *object, int options)
 {
 	return addr2line_init(object, NULL, options);
 }
 
-addr2line_t * addr2line_init_maps(maps_t *parsed_maps, int options)
+addr2line_t *addr2line_init_maps(maps_t *parsed_maps, int options)
 {
 	return addr2line_init(maps_path(parsed_maps), parsed_maps, options);
 }
 
-static addr2line_t * addr2line_init(char *object, maps_t *parsed_maps, int options)
+static addr2line_t *addr2line_init(char *object, maps_t *parsed_maps, int options)
 {
 	addr2line_t *backend = NULL;
 	
@@ -181,16 +191,23 @@ static addr2line_t * addr2line_init(char *object, maps_t *parsed_maps, int optio
 		}
 	}
 
+	int multiple_addr2line_processes = 0;
+
+#if defined(HAVE_LLVM_TOOLS)
+	multiple_addr2line_processes = multiple_addr2line_processes || (backend->useBackend == USE_LLVM_TOOLS);
+#endif
 #if defined(HAVE_BINUTILS)
+	multiple_addr2line_processes = multiple_addr2line_processes || (backend->useBackend == USE_BINUTILS);
+#endif
+
 	// Determine the number of addr2line processes to spawn
-	if ((is_mapping) && (backend->useBackend == USE_BINUTILS)) 
+	if ((is_mapping) && (multiple_addr2line_processes)) 
 	{
 		/*
-		 * binutils can not take a /proc/self/maps file as input, 
+		 * binutils and llvm-tools can not take a /proc/self/maps file as input, 
 		 * so we will instantiate individual addr2line processes for each 
 		 * executable mapping in the maps file.
 		 */
-		fprintf(stderr, "addr2line_init: binutils backend with maps file\n");
 		int num_exec_entries = exec_mappings_size(backend->procMaps);
 		backend->numProcesses = num_exec_entries;
 
@@ -208,8 +225,7 @@ static addr2line_t * addr2line_init(char *object, maps_t *parsed_maps, int optio
 			exec_entry = next_exec_mapping(exec_entry);
 		}
 	}
-	else 
-#endif
+	else
 	{
 		/*
 		* elfutils can directly process a /proc/self/maps file, allowing us to use a single addr2line instance.
@@ -245,12 +261,20 @@ static addr2line_t * addr2line_init(char *object, maps_t *parsed_maps, int optio
  * @param address Address to adjust (if required).
  * @param translator Pointer to the addr2line process handler.
  */
-static void * adjust_address(addr2line_t *backend, void *address, addr2line_process_t **translator)
+static void *adjust_address(addr2line_t *backend, void *address, addr2line_process_t **translator)
 {
 	void *adjusted_address = address;
+	int backend_needs_adjustment = 0;
+
+#if defined(HAVE_LLVM_TOOLS)
+	backend_needs_adjustment = backend_needs_adjustment || (backend->useBackend == USE_LLVM_TOOLS);
+#endif
 #if defined(HAVE_BINUTILS)
-	// Only binutils require manual adjustment of the address to the mapping offset.
-	if ((backend->useBackend == USE_BINUTILS) && (backend->procMaps))
+	backend_needs_adjustment = backend_needs_adjustment || (backend->useBackend == USE_BINUTILS);
+#endif
+
+	// Both llvm-tools and binutils require manual adjustment of the address to the mapping offset.
+	if (backend_needs_adjustment && (backend->procMaps))
 	{
 		// If multiple addr2line processes are used, find the one whose mapping contains the address
 		for (int i = 0; i < backend->numProcesses; ++i)
@@ -261,65 +285,64 @@ static void * adjust_address(addr2line_t *backend, void *address, addr2line_proc
 			if ((address_in_mapping(current_process->execMapping, (unsigned long)address)) && (!mapping_is_at_fixed_base_address(current_process->execMapping)))
 			{
 				/* TL;DR: Adjust the address to the mapping offset.
-				 *        This applies both to shared libraries and -fPIE/-pie executables, regardless of ASLR.
-				 *        Offsets do not apply to -no-pie executables that are mapped to a fixed base address (usually 0x400000).
-				 *
-				 * The following example illustrates the /proc/self/maps for a -no-pie executable linked with a shared library.
-				 * We have observed that for a given binary or shared library, there are multiple mappings in the maps file, 
-				 * with only one being executable [--x-], which is not the first entry in the list, e.g.:
-				 *
-				 * 00400000-00403000 r--p 00000000 00:2f 391035422   my_main
-				 * 00403000-0047a000 r-xp 00003000 00:2f 391035422   my_main
-				 * 0047a000-0049e000 r--p 0007a000 00:2f 391035422   my_main
-				 * ...
-				 * 7f9c93cf7000-7f9c93d01000 r--p 00000000 00:35 391035434   libshared.so
-				 * 7f9c93d01000-7f9c93d78000 r-xp 0000a000 00:35 391035434   libshared.so
-				 * 7f9c93d78000-7f9c93d9c000 r--p 00081000 00:35 391035434   libshared.so
-				 * 
-				 * The addresses that we are capturing belong to the executable mappings [--x-], for instance, 
-				 * 0x403e46, which belongs to the executable mapping of my_main; and 0x7f9c93d01e32, which
-				 * belongs to the executable mapping of libshared.so. For the latter, we adjust the address
-				 * by substracting the base address of the mapping (7f9c93d01000) and adding the offset (0000a000).
-				 * The resulting adjusted address (0xae32) can be successfully translated:
-				 * 
-				 * > binutils-addr2line -e libshared.so 0xae32
-				 * bye_world
-				 * /home/user/libshared.c:13
-				 * 
-				 * However, if the same offset operation is applied to an address from the main binary, 
-				 * the translation fails. In the example, the adjusted address would be computed as:
-				 * 0x403e46 (original) - 00403000 (start) + 00003000 (offset) = 0x3e46
-				 * 
-				 * Then, the translation fails:
-				 * > binutils-addr2line -e my_main 0x3e46
-				 * ??
-				 * ??:0
-				 * 
-				 * For the addresses from -no-pie executables that belong to the main binary, we need to leave them 
-				 * unchanged for the translation to work:
-				 * 
-				 * > binutils-addr2line -e my_main 0x403e46 
-				 * hello_world
-				 * /home/user/my_main.c:42
-				 * 
-				 */
+				*        This applies both to shared libraries and -fPIE/-pie executables, regardless of ASLR.
+				*        Offsets do not apply to -no-pie executables that are mapped to a fixed base address (usually 0x400000).
+				*
+				* The following example illustrates the /proc/self/maps for a -no-pie executable linked with a shared library.
+				* We have observed that for a given binary or shared library, there are multiple mappings in the maps file, 
+				* with only one being executable [--x-], which is not the first entry in the list, e.g.:
+				*
+				* 00400000-00403000 r--p 00000000 00:2f 391035422   my_main
+				* 00403000-0047a000 r-xp 00003000 00:2f 391035422   my_main
+				* 0047a000-0049e000 r--p 0007a000 00:2f 391035422   my_main
+				* ...
+				* 7f9c93cf7000-7f9c93d01000 r--p 00000000 00:35 391035434   libshared.so
+				* 7f9c93d01000-7f9c93d78000 r-xp 0000a000 00:35 391035434   libshared.so
+				* 7f9c93d78000-7f9c93d9c000 r--p 00081000 00:35 391035434   libshared.so
+				* 
+				* The addresses that we are capturing belong to the executable mappings [--x-], for instance, 
+				* 0x403e46, which belongs to the executable mapping of my_main; and 0x7f9c93d01e32, which
+				* belongs to the executable mapping of libshared.so. For the latter, we adjust the address
+				* by substracting the base address of the mapping (7f9c93d01000) and adding the offset (0000a000).
+				* The resulting adjusted address (0xae32) can be successfully translated:
+				* 
+				* > binutils-addr2line -e libshared.so 0xae32
+				* bye_world
+				* /home/user/libshared.c:13
+				* 
+				* However, if the same offset operation is applied to an address from the main binary, 
+				* the translation fails. In the example, the adjusted address would be computed as:
+				* 0x403e46 (original) - 00403000 (start) + 00003000 (offset) = 0x3e46
+				* 
+				* Then, the translation fails:
+				* > binutils-addr2line -e my_main 0x3e46
+				* ??
+				* ??:0
+				* 
+				* For the addresses from -no-pie executables that belong to the main binary, we need to leave them 
+				* unchanged for the translation to work:
+				* 
+				* > binutils-addr2line -e my_main 0x403e46 
+				* hello_world
+				* /home/user/my_main.c:42
+				* 
+				*/
 
 				/*
-				 * Regardless of -fPIE / -no-pie, note that the first entry in the maps file for the main binary is mapped at offset zero:
-				 *                               
-				 * 00400000-00403000 r--p 00000000 00:2f 391035422   my_main <= The first mapping for the main binary is offset zero
-				 * 00403000-0047a000 r-xp 00003000 00:2f 391035422   my_main <= Address 0x403e46 belongs to this mapping
-				 *  
-				 * It's not clear if some extra offsetting would be necessary if the first entry offset was above zero. 
-				 * We leave this long explanation as a note for future reference, in case some translations fail.
-				 */
+				* Regardless of -fPIE / -no-pie, note that the first entry in the maps file for the main binary is mapped at offset zero:
+				*                               
+				* 00400000-00403000 r--p 00000000 00:2f 391035422   my_main <= The first mapping for the main binary is offset zero
+				* 00403000-0047a000 r-xp 00003000 00:2f 391035422   my_main <= Address 0x403e46 belongs to this mapping
+				*  
+				* It's not clear if some extra offsetting would be necessary if the first entry offset was above zero. 
+				* We leave this long explanation as a note for future reference, in case some translations fail.
+				*/
 				*translator = current_process;
 				adjusted_address = absolute_to_relative(current_process->execMapping, address);
 				return adjusted_address;
 			}
 		}
 	}
-#endif
 	// Default to the first addr2line process and leave the address unchanged
 	*translator = &backend->processList[0]; 
 	return address;
@@ -342,7 +365,7 @@ static void * adjust_address(addr2line_t *backend, void *address, addr2line_proc
  * @param address Address to translate.
  * @param[out] adjusted_address_str Address string passed to the addr2line command after adjusting it to the mapping offset if needed.
  */
-static addr2line_process_t * invoke_translator(addr2line_t *backend, void *address, void **adjusted_address_ptr, char **adjusted_address_str)
+static addr2line_process_t *invoke_translator(addr2line_t *backend, void *address, void **adjusted_address_ptr, char **adjusted_address_str)
 {
 	addr2line_process_t *translator = NULL;
 	int is_binary = (backend->procMaps == NULL);
@@ -395,6 +418,12 @@ static addr2line_process_t * invoke_translator(addr2line_t *backend, void *addre
 			char *argv_elfutils[] = { ELFUTILS_ADDR2LINE, "-C", "-f", "-i", (is_binary ? "-e" : "-M"), backend->inputObject, (backend->setOptions & OPTION_NON_PERSISTENT ? adjusted_address_chomp : NULL), NULL };
 			if (backend->useBackend == USE_ELFUTILS) {
 				argv = argv_elfutils;			
+			}
+#endif
+#if defined(HAVE_LLVM_TOOLS)
+			char *argv_llvm_tools[] = { LLVM_TOOLS_ADDR2LINE, "-C", "-f", "-e", (is_binary ? backend->inputObject : translator->execMapping->pathname), (backend->setOptions & OPTION_NON_PERSISTENT ? adjusted_address_chomp : NULL), NULL };
+			if (backend->useBackend == USE_LLVM_TOOLS) {
+				argv = argv_llvm_tools;
 			}
 #endif
 #if defined(HAVE_BINUTILS)
